@@ -1,0 +1,21 @@
+name:                FRPTetris
+version:             0.1.0.0
+synopsis:            A Tetris-game implemented in Haskell using Functional Reactive Programming-style
+license-file:        LICENSE
+author:              Andreas Granström
+maintainer:          andreas.granstrom@gmail.com
+category:            Game
+build-type:          Simple
+cabal-version:       >=1.8
+
+executable tetris
+  hs-source-dirs:      src
+  main-is: Main.hs
+
+  build-depends:       
+    base ==4.6.*, 
+    transformers ==0.3.*, 
+    containers ==0.5.*, 
+    netwire ==5.0.*, 
+    SDL ==0.6.*, 
+    SDL-ttf ==0.6.*
