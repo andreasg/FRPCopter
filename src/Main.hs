@@ -5,7 +5,7 @@ import Params
 
 import System.Random (getStdGen)
 import Linear
-5
+
 import qualified Control.Monad as CM
 import qualified Graphics.UI.SDL as SDL
 import Data.Set (Set)
@@ -18,6 +18,8 @@ import Control.Wire
 import Prelude hiding (id, (.))
 import Data.Maybe (isJust)
 import FRP.Netwire
+import Debug.Trace
+import Control.Monad.Fix
 
 data UserCommand = Accelerate | QuitGame | NoCmd
   deriving (Show, Eq)
@@ -74,7 +76,11 @@ position = mkPureN $ const (Right 0.0, integral 0.0)
 main :: IO ()
 main = do
        g <- getStdGen
-       testWire clockSession_ (levelBorders g)
+       testWire clockSession_ ((nextFloorHeight ceilingInterval g 1 :: (HasTime t s, Monad m, MonadFix m) => Wire s () m a Double))
+
+                       
+
+           
 
 
 helicopter :: (HasTime t s) => Wire s () (Reader Double) UserCommand Helicopter
