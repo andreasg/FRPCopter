@@ -6,6 +6,7 @@ import System.Random
 import Prelude hiding ((.), id, floor, ceiling)
 import Linear
 import Control.Monad.Fix
+import FRP.Netwire
 
 data Level = Level {
   floor   :: [V2 Double]
@@ -66,3 +67,11 @@ nextFloorHeight interv g t' =
   in for 2 . (mkPureN $ \_ -> (Right x,  nextFloorHeight interv g1 (fromInteger nextWait))) . after 1
 -}
 
+
+
+nextFloor
+  :: (Monad m, HasTime t s, RandomGen g) =>
+     g -> t -> Wire s () m a Double
+nextFloor g t =
+  let (t', g') = randomR (1,4) g
+  in for t . hold . noiseR t (100 :: Double, 3000 :: Double) g --> nextFloor g' (fromInteger t')
