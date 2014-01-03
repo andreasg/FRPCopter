@@ -3,7 +3,7 @@ module Main where
 import Level
 import Params
 
-import System.Random (getStdGen)
+import System.Random (getStdGen, RandomGen)
 import Linear
 
 import qualified Control.Monad as CM
@@ -76,7 +76,11 @@ position = mkPureN $ const (Right 0.0, integral 0.0)
 main :: IO ()
 main = do
        g <- getStdGen
-       testWire clockSession_ ((nextFloorHeight ceilingInterval g 1 :: (HasTime t s, Monad m, MonadFix m) => Wire s () m a Double))
+       testWire clockSession_ (l g)
+
+
+ where l :: (Monad m, HasTime t s, RandomGen g) => g -> Wire s () m a (Ceiling, Floor)
+       l = level
 
                        
 
