@@ -8,18 +8,15 @@ import Linear
 
 import qualified Control.Monad as CM
 import qualified Graphics.UI.SDL as SDL
-import Data.Set (Set)
-import qualified Data.Set as Set
-import Control.Monad.State (State)
-import qualified Control.Monad.State as CMS
-import Control.Monad.Reader (Reader, ReaderT)
+import qualified Graphics.UI.SDL.Primitives as SDLPrim
+import Control.Monad.Reader (Reader)
 import qualified Control.Monad.Reader as CMR
 import Control.Wire
 import Prelude hiding (id, (.))
-import Data.Maybe (isJust)
 import FRP.Netwire
-import Debug.Trace
-import Control.Monad.Fix
+
+import Data.Bits
+import Data.Word (Word8)
 
 data UserCommand = Accelerate | QuitGame | NoCmd
   deriving (Show, Eq)
@@ -37,27 +34,74 @@ parseEvent = do
     _        -> return NoCmd
       
 
-main' :: IO ()
-main' = do
+rgbColor :: Word8 -> Word8 -> Word8 -> SDL.Pixel
+rgbColor r g b = SDL.Pixel (shiftL (fi r) 24 .|.
+                            shiftL (fi g) 16 .|.
+                            shiftL (fi b) 8 .|.
+                            255)
+  where fi = fromIntegral
+
+white :: SDL.Pixel
+white = rgbColor 255 255 255
+
+red :: SDL.Pixel
+red = rgbColor 255 0 0
+
+green :: SDL.Pixel
+green = rgbColor 0 255 0
+
+main :: IO ()
+main = do
   SDL.init [SDL.InitEverything]
   screen <- SDL.setVideoMode screenW screenH 32 [SDL.SWSurface]
-  go screen clockSession_ helicopter
+  
+  g <- getStdGen
+  go screen clockSession_ (game g)
+
+   
+  
   where
+    
   go screen s w = do
       cmd <- parseEvent
       (ds, s') <- stepSession s
-      let (continue, w') = flip CMR.runReader 10.0 $ do
-          (eab, w') <- stepWire w ds (Right cmd)
-          case eab of
-            Left _ -> return (Nothing, w') -- (True, w')
-            Right e -> return (Just e, w')
-      CM.when (isJust continue) $ print continue
-      go screen s' w' 
+      
+      let (continue, w') = flip CMR.runReader defaultGameParams $
+           do
+            (eab, w'') <- stepWire w ds (Right cmd)
+            case eab of
+              Left _ -> return (Nothing, w'')
+              Right e -> return (Just e, w'')
+      case continue of
+        Nothing ->  go screen s' w' 
+        Just (Just (x, (Ceiling c, Floor f))) -> do
+          clear screen
+
+          SDLPrim.bezier screen (pad $ map (\(x',y) -> (round (x' - x), round y)) c) 100 green
+          SDLPrim.bezier screen (pad $ map (\(x',y) -> (round (x' - x), round y)) f) 100 red
+--          CM.forM (c) $ \(x',y) ->
+--            SDLPrim.circle screen (round (x' - x)) (round y) 4 green
 
 
+--          CM.forM (f) $ \(x',y) ->
+--            SDLPrim.circle screen (round (x' - x)) (round y) 4 red
 
-game :: (HasTime t s) => Wire s () (Reader Double) UserCommand Bool
-game = pure False . onUserCommand QuitGame
+          SDL.flip screen
+          go screen s' w' 
+  clear s = CM.void $ SDL.mapRGB (SDL.surfaceGetPixelFormat s) 40 40 40 >>= SDL.fillRect s Nothing
+
+pad [] = []
+pad (x:[]) = x:[]
+pad ((x,y):xs) = (screenW,y):(x,y):xs
+
+game :: (HasTime t s, RandomGen g) => g -> Wire s () (Reader GameParams) UserCommand (Maybe (Double, (Ceiling, Floor)))
+game g =
+  mkGenN $ \_ -> do
+    gp <- CMR.ask
+    return (Left (), pure Nothing . onUserCommand QuitGame <|> arr Just . (scrollPos gp  &&& level g))
+
+ where scrollPos gp = (time * (scrollSpeed gp)) >>> arr (realToFrac :: Real a => a -> Double)
+
 
 data Helicopter = Helicopter (V2 Double) deriving (Show)
 
@@ -73,18 +117,19 @@ position = mkPureN $ const (Right 0.0, integral 0.0)
                     bounded = if col then max 1 (min 149 pos) else pos
                 in (Right bounded, go bounded)
                    
-main :: IO ()
-main = do
+main' :: IO ()
+main' = do
        g <- getStdGen
-       testWire clockSession_ (l g)
+       
+       testWireM (return . flip CMR.runReader defaultGameParams) clockSession_ (w g)
 
 
- where l :: (Monad m, HasTime t s, RandomGen g) => g -> Wire s () m a (Ceiling, Floor)
-       l = level
 
-                       
-
+  where w :: (HasTime t s, RandomGen g) => g -> Wire s () (Reader GameParams) a (Ceiling, Floor)
+        w = level
            
+
+
 
 
 helicopter :: (HasTime t s) => Wire s () (Reader Double) UserCommand Helicopter
