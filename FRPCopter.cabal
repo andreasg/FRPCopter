@@ -1,6 +1,6 @@
-name:                FRPTetris
+name:                FRPCopter
 version:             0.1.0.0
-synopsis:            A Tetris-game implemented in Haskell using Functional Reactive Programming-style
+synopsis:            A helicepter-game implemented in Haskell using Functional Reactive Programming-style
 license-file:        LICENSE
 author:              Andreas Granstroem
 maintainer:          andreas.granstrom@gmail.com
@@ -8,7 +8,7 @@ category:            Game
 build-type:          Simple
 cabal-version:       >=1.10
 
-executable tetris
+executable heli
   default-language: Haskell2010
   default-extensions:
         Arrows
@@ -17,18 +17,19 @@ executable tetris
         ScopedTypeVariables
   hs-source-dirs:      src/
   main-is:             Main.hs
+  other-modules: Params, Level
   ghc-options: -rtsopts -threaded
   build-depends:       
-    base ==4.6.*, 
-    transformers ==0.3.*, 
-    containers ==0.5.*, 
-    netwire ==5.0.*, 
-    SDL ==0.6.*, 
-    SDL-ttf ==0.6.*,
+    base == 4.6.*, 
+    transformers == 0.3.*, 
+    containers == 0.5.*, 
+    netwire == 5.0.*, 
+    SDL == 0.6.*, 
+    SDL-ttf == 0.6.*,
     SDL-gfx == 0.6.*,
     lens == 3.10.*,
     linear == 1.3.*,
     matrix == 0.2.*,
     mtl == 2.1.*,
-    random,
-    time
+    random == 1.0.*,
+    time == 1.4.*
