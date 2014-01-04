@@ -21,7 +21,7 @@ data GameParams = GameParams {
 defaultGameParams :: GameParams
 defaultGameParams = GameParams {
     scrollSpeed = 240
-  , segmentLength = (0.05,0.3)
+  , segmentLength = (0.05,0.7)
   , ceilingRange = (0.0, screenH / 2.0)
   , floorRange = (screenH / 2.0,  screenH)
   , outOfRangeLimit = 100
