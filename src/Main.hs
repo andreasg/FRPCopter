@@ -51,8 +51,14 @@ parseEvent active = do
     SDL.Quit -> Set.insert QuitGame active
     _        -> active
 
-main :: IO ()
 main = do
+       g <- getStdGen
+       testWireM (return . flip CMR.runReader defaultGameParams) clockSession_ (ceiling' g)
+
+
+
+main' :: IO ()
+main' = do
   SDL.init [SDL.InitEverything]
   SDL.setCaption "FRPCopter" ""
   screen <- SDL.setVideoMode screenW screenH 32 [SDL.HWSurface]
@@ -61,6 +67,7 @@ main = do
   where
   go cmds' screen s w = do
       green <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 0 255 0 255
+      red <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 255 0 0 255      
       white <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 255 255 255 255      
       cmds <- parseEvent cmds'
       (ds, s') <- stepSession s
@@ -73,11 +80,13 @@ main = do
       case continue of
         Nothing ->  go cmds screen s' w'
         Just Nothing -> putStrLn "quitting"
-        Just (Just (x, (c, f), (V2 px py))) -> do
+        Just (Just (x, (o,(c, f)), (V2 px py))) -> do
           clear screen
+          SDLPrim.circle screen (round (px - x)) (round py) 10 white
           CM.forM (map (rectToSDLRect x) c) $ flip (SDL.fillRect screen) green . Just
           CM.forM (map (rectToSDLRect x) f) $ flip (SDL.fillRect screen) green . Just
-          SDLPrim.circle screen (round (px - x)) (round py) 10 white
+          CM.forM (map (rectToSDLRect x) o) $ flip (SDL.fillRect screen) red . Just
+
           SDL.flip screen
           go cmds screen s' w'
   clear s = CM.void $ SDL.mapRGB (SDL.surfaceGetPixelFormat s) 40 40 40 >>= SDL.fillRect s Nothing
@@ -91,32 +100,20 @@ pad ((x,y):xs) = (screenW,y):(x,y):xs
 rectToSDLRect :: Double -> Rect -> SDL.Rect
 rectToSDLRect dx (Rect (V2 x y) (V2 w h)) = SDL.Rect (round (x - dx)) (round y) (round w) (round h)
 
-ceilingToRects :: Double -> Ceiling -> [SDL.Rect]
-ceilingToRects dx = reverse . toRects' . reverse . unCeiling
- where
-  toRects' [] = []
-  toRects' ((V2 x' y'):[]) = let (x,y) = (round (x'-dx), round y') in [SDL.Rect x 0 (screenW - x) y]
-  toRects' ((V2 x0 y0):x@(V2 x1 _):xs) = (SDL.Rect (round (x0-dx)) 0 (round $ x1-x0) (abs $ round $ y0)) : toRects' (x:xs)
-
-floorToRects :: Double -> Floor -> [SDL.Rect]
-floorToRects dx = reverse . toRects' . reverse . unFloor
- where
-  toRects' [] = []
-  toRects' ((V2 x' y'):[]) = let (x,y) = (round (x'-dx), round y') in [SDL.Rect x y (screenW - x) screenH]
-  toRects' ((V2 x0 y0):x@(V2 x1 _):xs) = (SDL.Rect (round (x0-dx)) (round y0) (round $ x1-x0) screenH) : toRects' (x:xs)
-
-game :: (HasTime t s, RandomGen g, Fractional t) => g -> Wire s () (Reader GameParams) (Set.Set UserCommand) (Maybe (Double, ([Rect], [Rect]), V2 Double))
+game :: (HasTime t s, RandomGen g, Fractional t)
+     => g
+     -> Wire s () (Reader GameParams) (Set.Set UserCommand) (Maybe (Double, ([Rect], ([Rect], [Rect])), V2 Double))
 game g =
   mkGenN $ \_ -> do
     gp <- CMR.ask
-    return (Left (), pure Nothing . onUserCommand QuitGame <|> run gp)
+    return (Left (), ((pure (Just (0, ([], ([],[])), V2 0 0)) . unlessUserCommand (Accelerate Up)) --> (pure Nothing . onUserCommand QuitGame <|> run gp)))
   where scrollPos gp = (time * pure (scrollSpeed gp)) >>> arr (realToFrac :: Real a => a -> Double)
         run gp = proc cmds -> do sp <- scrollPos gp -< ()
-                                 l  <- level g -< ()
+                                 (o, (c, l))  <- level g -< ()
                                  p  <- position -< (cmds, 300)
-                                 c <- isColliding -< (p, (fst l ++ snd l))
-                                 if not c
-                                   then returnA -< Just (sp, l, p)
+                                 col <- isColliding -< (p, (o ++ c ++ l))
+                                 if not col
+                                   then returnA -< Just (sp, (o, (c, l)), p)
                                    else returnA -< Nothing
 
 isColliding :: Monad m => Wire s e m (V2 Double, [Rect]) Bool

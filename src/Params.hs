@@ -16,14 +16,18 @@ data GameParams = GameParams {
   , floorRange :: (Double, Double)
   , outOfRangeLimit :: Num a => a
   , gravity :: Double
+  , obsticleRange :: (Double, Double)
+  , obsticleHeights :: (Double, Double)
  }
 
 defaultGameParams :: GameParams
 defaultGameParams = GameParams {
     scrollSpeed = 240
   , segmentLength = (0.05,0.7)
-  , ceilingRange = (0.0, screenH / 2.0)
-  , floorRange = (screenH / 2.0,  screenH)
+  , ceilingRange = (0.0, screenH / 3.0)
+  , floorRange = (screenH - (screenH / 3.0),  screenH)
   , outOfRangeLimit = 100
   , gravity = (9)
+  , obsticleRange = (screenH / 3.0, screenH - (screenH / 3.0))
+  , obsticleHeights = (10, 60)
   }
