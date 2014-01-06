@@ -10,12 +10,11 @@ bpp :: Num a => a
 bpp = 32
 
 data GameParams = GameParams {
-    scrollSpeed :: Num a => a  -- (HasTime t s, Monad m) => Wire s e m a t
+    scrollSpeed :: Num a => a
   , segmentLength :: (Double, Double)
   , ceilingRange :: (Double, Double)
   , floorRange :: (Double, Double)
   , outOfRangeLimit :: Num a => a
-  , gravity :: Double
   , obsticleRange :: (Double, Double)
   , obsticleHeights :: (Double, Double)
  }
@@ -27,7 +26,6 @@ defaultGameParams = GameParams {
   , ceilingRange = (0.0, screenH / 3.0)
   , floorRange = (screenH - (screenH / 3.0),  screenH)
   , outOfRangeLimit = 100
-  , gravity = (9)
   , obsticleRange = (screenH / 3.0, screenH - (screenH / 3.0))
   , obsticleHeights = (10, 60)
   }
