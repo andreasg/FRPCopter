@@ -15,6 +15,7 @@ executable heli
         OverloadedStrings
         RankNTypes
         ScopedTypeVariables
+        GeneralizedNewtypeDeriving
   hs-source-dirs:      src/
   main-is:             Main.hs
   other-modules: Params, Level
@@ -32,4 +33,5 @@ executable heli
     matrix == 0.2.*,
     mtl == 2.1.*,
     random == 1.0.*,
-    time == 1.4.*
+    time == 1.4.*,
+    MonadRandom == 0.1.*

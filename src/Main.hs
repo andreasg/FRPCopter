@@ -1,4 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 module Main where
 
 import Level
@@ -9,11 +11,13 @@ import Linear
 import qualified Control.Monad as CM
 import qualified Graphics.UI.SDL as SDL
 import qualified Graphics.UI.SDL.Primitives as SDLPrim
-import Control.Monad.Reader (Reader)
+import Control.Monad.Reader (Reader, MonadReader)
 import qualified Control.Monad.Reader as CMR
 import Control.Wire
 import Prelude hiding (id, (.))
 import FRP.Netwire
+import Control.Monad.Random
+import Control.Monad.Identity
 
 import qualified Data.Set as Set
 
@@ -21,6 +25,9 @@ data Direction = Up | Down | East | West deriving (Eq, Show, Ord)
 
 data UserCommand = Accelerate Direction | QuitGame
   deriving (Show, Eq, Ord)
+
+
+
 
 
 parseEvent :: Set.Set UserCommand -> IO (Set.Set UserCommand)
@@ -48,31 +55,28 @@ parseEvent active = do
     SDL.Quit -> Set.insert QuitGame active
     _        -> active
 
-
 main :: IO ()
 main = do
   SDL.init [SDL.InitEverything]
   SDL.setCaption "FRPCopter" ""
   screen <- SDL.setVideoMode screenW screenH 32 [SDL.HWSurface]
-  go Set.empty screen clockSession_ . game =<< getStdGen
+  g <- getStdGen
+  go g Set.empty screen clockSession_ game
   SDL.quit
   where
-  go cmds' screen s w = do
+  go g cmds' screen s w = do
       green <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 0 255 0 255
       red <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 255 0 0 255
       white <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 255 255 255 255
       cmds <- parseEvent cmds'
       (ds, s') <- stepSession s
-      let (continue, w') = flip CMR.runReader defaultGameParams $
-           do
-            (eab, w'') <- stepWire w ds (Right cmds)
-            case eab of
-              Left _ -> return (Nothing, w'')
-              Right e -> return (Just e, w'')
+
+      let ((continue, w'), g') = runIdentity . flip runRandT g . flip CMR.runReaderT defaultGameParams . runGameState $ stepWire w ds (Right cmds)
+
       case continue of
-        Nothing ->  go cmds screen s' w'
-        Just Nothing -> putStrLn "quitting"
-        Just (Just (x, (o,(c, f)), (V2 px py))) -> do
+        Left _ -> go g' cmds screen s' w'
+        Right Nothing -> putStrLn "quitting"
+        Right (Just (x, (o,(c, f)), (V2 px py))) -> do
           clear screen
           SDLPrim.circle screen (round (px - x)) (round py) 10 white
           CM.forM (map (rectToSDLRect x) c) $ flip (SDL.fillRect screen) green . Just
@@ -80,7 +84,7 @@ main = do
           CM.forM (map (rectToSDLRect x) o) $ flip (SDL.fillRect screen) red . Just
 
           SDL.flip screen
-          go cmds screen s' w'
+          go g' cmds screen s' w'
   clear s = CM.void $ SDL.mapRGB (SDL.surfaceGetPixelFormat s) 40 40 40 >>= SDL.fillRect s Nothing
 
 
@@ -88,13 +92,12 @@ rectToSDLRect :: Double -> Rect -> SDL.Rect
 rectToSDLRect dx (Rect (V2 x y) (V2 w h)) = SDL.Rect (round (x - dx)) (round y) (round w) (round h)
 
 
-game :: (HasTime t s, RandomGen g, Fractional t)
-     => g
-     -> Wire s () (Reader GameParams) (Set.Set UserCommand) (Maybe (Double, ([Rect], ([Rect], [Rect])), V2 Double))
-game g = pure Nothing . onUserCommand QuitGame <|> run
-        where 
+game :: (HasTime t s, Fractional t, MonadReader GameParams m, MonadRandom m)
+     => Wire s () m (Set.Set UserCommand) (Maybe (Double, ([Rect], ([Rect], [Rect])), V2 Double))
+game = pure Nothing . onUserCommand QuitGame <|> run
+        where
         run  = proc cmds -> do sp <- (scroll - screenW) -< ()
-                               (o, (c, l))  <- level  g -< ()
+                               (o, (c, l))  <- level -< ()
                                p <- position -< (cmds, 300)
                                collide <- isColliding -< (p, (o ++ c ++ l))
                                if not collide
@@ -117,8 +120,8 @@ unlessUserCommand command =
     mkPure_ $ \cmd -> if not (command `Set.member` cmd) then Right undefined else Left mempty
 
 
-acceleration :: (HasTime t s, Monoid e) => Wire s e (Reader GameParams) (Set.Set UserCommand, Double) (V2 Double)
-acceleration = proc (cmd, acc) -> do
+acceleration :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m) => Wire s e m (Set.Set UserCommand, Double) (V2 Double)
+acceleration= proc (cmd, acc) -> do
   base   <- baseAcceleration -< ()
   up     <- arr (V2 0 . negate . snd) . on Up        <|> neutral -< (cmd, acc)
   down   <- arr (V2 0 . snd) . on Down               <|> neutral -< (cmd, acc)
@@ -129,17 +132,16 @@ acceleration = proc (cmd, acc) -> do
         on c = first (onUserCommand (Accelerate c))
 
 
-gravityVector :: (HasTime t s, Monoid e) => Wire s e (Reader GameParams) (Set.Set UserCommand, Double) (V2 Double)
+gravityVector :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m) => Wire s e m (Set.Set UserCommand, Double) (V2 Double)
 gravityVector =  (integral (V2 0 100) . pure (V2 0 2000) . first (unlessUserCommand (Accelerate Up)))
                 -->  pure (V2 0 0) . first (onUserCommand (Accelerate Up))
                 --> gravityVector
 
-
-baseAcceleration :: Monoid e => Wire s e (Reader GameParams) a (V2 Double)
+baseAcceleration :: (Monoid e, MonadRandom m, CMR.MonadReader GameParams m) => Wire s e m a (V2 Double)
 baseAcceleration = mkGen_ $ \_ ->
   do gp <- CMR.ask
      return . Right $ V2 (scrollSpeed gp) 0
 
 
-position :: (HasTime t s, Monoid e) => Wire s e (Reader GameParams) (Set.Set UserCommand, Double) (V2 Double)
+position :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m) => Wire s e m (Set.Set UserCommand, Double) (V2 Double)
 position = integral (V2 100 100) . (arr (uncurry (^+^))) . (gravityVector &&& acceleration)
