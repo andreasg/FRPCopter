@@ -43,7 +43,7 @@ floor :: (MonadRandom m, HasTime t s, Fractional t
          Wire s e m Double [Rect]
 floor = mkGenN $ \_ -> do
   sl <- liftM segmentLength ask
-  w  <- liftM scrW ask  
+  w  <- liftM scrW ask
   return (Right [], construct w . onEventM floorTile . events sl)
   where floorTile (x, dt) = do
           gp <- ask
@@ -100,7 +100,7 @@ construct :: (Monad m, Monoid e) =>
              Double -> Wire s e m (Event Rect) [Rect]
 construct lim  = hold . accumE append []
  where outOfRangeThreshhold = 1000
-       append xs x@(Rect (V2 x0 _) _ ) = 
+       append xs x@(Rect (V2 x0 _) _ ) =
         x : filter (\(Rect (V2 x1 _)_) ->x1>=x0-lim-outOfRangeThreshhold) xs
 
 

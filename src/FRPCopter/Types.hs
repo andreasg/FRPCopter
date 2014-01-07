@@ -5,9 +5,8 @@ import Control.Monad.Reader (ReaderT, MonadReader)
 import Control.Monad.Random
 import Control.Monad.Identity
 
-data Game = Running (Double, ([Rect], ([Rect], [Rect])), V2 Double) Bool
-          | Ending
 
+--------------------------------------------------------------------------------
 data GameParams = GameParams {
     scrollSpeed :: Num a => a
   , segmentLength :: (Double, Double)
@@ -18,7 +17,14 @@ data GameParams = GameParams {
   , obsticleHeights :: (Double, Double)
   , scrW :: Num a => a
   , scrH :: Num a => a
+  , bpp :: Int
  }
+
+
+--------------------------------------------------------------------------------
+data Game = Running (Double, ([Rect], ([Rect], [Rect])), V2 Double) Bool
+          | Ending
+
 
 --------------------------------------------------------------------------------
 class CanContain a where

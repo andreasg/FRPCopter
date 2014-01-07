@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Main where
 
@@ -18,19 +17,7 @@ import FRP.Netwire
 import Control.Monad.Random
 
 
-
 --------------------------------------------------------------------------------
-screenW :: Num a => a
-screenW = 800
-
-screenH :: Num a => a
-screenH = 600
-
-bpp :: Num a => a
-bpp = 32
-
---------------------------------------------------------------------------------
-
 defaultGameParams :: GameParams
 defaultGameParams = GameParams {
     scrollSpeed = 240
@@ -40,9 +27,15 @@ defaultGameParams = GameParams {
   , outOfRangeLimit = 100
   , obsticleRange = (screenH / 3, screenH - (screenH / 3))
   , obsticleHeights = (10, 60)
-  , scrH = 600
-  , scrW = 800
+  , scrH = screenH
+  , scrW = screenW
+  , bpp = 32
   }
+  where
+    screenW :: Num a => a
+    screenW = 800
+    screenH :: Num a => a
+    screenH = 600
 
 
 --------------------------------------------------------------------------------
@@ -73,7 +66,8 @@ main :: IO ()
 main = do
   SDL.init [SDL.InitEverything]
   SDL.setCaption "FRPCopter" ""
-  screen <- SDL.setVideoMode screenW screenH 32 [SDL.HWSurface]
+  let gp = defaultGameParams
+  screen <- SDL.setVideoMode (scrW gp) (scrH gp) (bpp gp) [SDL.HWSurface]
   g <- getStdGen
   go g screen clockSession_ game
   SDL.quit
@@ -98,7 +92,7 @@ main = do
           else do putStrLn ("game over" :: String)
                   putStrLn ("distance covered: " ++ show (round px :: Int))
                   SDL.delay 1000
-                    
+
   clear s = CM.void $ SDL.mapRGB (SDL.surfaceGetPixelFormat s) 40 40 40
             >>= SDL.fillRect s Nothing
 
@@ -109,7 +103,7 @@ render screen (Running stuff _) = render' stuff
     render' (x, (o,(c, f)), (V2 px py)) = do
       green <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 0 255 0 255
       red   <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 255 0 0 255
-      white <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 255 255 255 255          
+      white <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 255 255 255 255
       SDLPrim.circle screen (round (px - x)) (round py) 10 white
       CM.forM_ (map (rectToSDLRect x) c) $ flip (SDL.fillRect screen) green . Just
       CM.forM_ (map (rectToSDLRect x) f) $ flip (SDL.fillRect screen) green . Just
@@ -121,13 +115,13 @@ render screen (Running stuff _) = render' stuff
 --------------------------------------------------------------------------------
 game :: (HasTime t s, Fractional t, MonadReader GameParams m, MonadRandom m)
      => Wire s () m SDL.Event Game
-game = pure Ending . quit <|>  run
+game = pure Ending . quit <|>  (mkGenN $ \_ -> CMR.ask >>= \gp ->  return (Left (), run gp))
         where
-        run  = proc e -> do sp <- (scroll - screenW) -< ()
-                            (o, (c, l))  <- level -< ()
-                            p <- position -< (e, 300)
-                            collide <- isColliding -< (p, (o ++ c ++ l))
-                            returnA -< Running (sp, (o, (c, l)), p) (not collide)
+        run gp  = proc e -> do sp <- (scroll - (scrW gp)) -< ()
+                               (o, (c, l))  <- level -< ()
+                               p <- position -< (e, 300)
+                               collide <- isColliding -< (p, (o ++ c ++ l))
+                               returnA -< Running (sp, (o, (c, l)), p) (not collide)
 
 isColliding :: Arrow a => a (V2 Double, [Rect]) Bool
 isColliding = arr $ \(pos, rs) -> any (contains pos) rs
