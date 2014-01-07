@@ -1,37 +1,18 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 
-module Level (level, GameState(..), Rect(..), CanContain(..), scroll) where
+module FRPCopter.Level (level, GameState(..), Rect(..), CanContain(..), scroll) where
 
-import Params
+import FRPCopter.Types
+
 import Control.Wire
 import Prelude hiding ((.), id, floor, ceiling)
 import Control.Wire.Unsafe.Event
 import Data.Fixed (mod')
-import Control.Monad.Reader (ReaderT, MonadReader, ask)
+import Control.Monad.Reader (MonadReader, ask)
 import Control.Monad.Random
 import Control.Monad.Identity
 import Linear (V2(..))
-
-
---------------------------------------------------------------------------------
-class CanContain a where
-  contains :: V2 Double -> a -> Bool
-
-
---------------------------------------------------------------------------------
-data Rect = Rect (V2 Double) (V2 Double)
-          deriving (Show)
-
-instance CanContain Rect where
-  contains (V2 x y) (Rect (V2 x' y') (V2 w h)) =    x' <= x && x <= (x'+w)
-                                                 && y' <= y && y <= (y'+h)
-
-
---------------------------------------------------------------------------------
-newtype GameState g a = GameState {
-    runGameState :: ReaderT GameParams (RandT g Identity) a
-    } deriving (Monad, MonadReader GameParams, MonadRandom)
 
 
 --------------------------------------------------------------------------------
@@ -62,32 +43,32 @@ floor :: (MonadRandom m, HasTime t s, Fractional t
          Wire s e m Double [Rect]
 floor = mkGenN $ \_ -> do
   sl <- liftM segmentLength ask
-  return (Right [], construct . onEventM floorTile . events sl)
+  w  <- liftM scrW ask  
+  return (Right [], construct w . onEventM floorTile . events sl)
   where floorTile (x, dt) = do
           gp <- ask
           (y :: Double) <- getRandomR (floorRange gp)
           return $ Rect (V2 (n x)                    (n y))
-                        (V2 (n $ dt* scrollSpeed gp) (n $ screenH - y))
-
+                        (V2 (n $ dt* scrollSpeed gp) (n $ scrH gp - y))
 
 ceiling :: (MonadRandom m, HasTime t s, Fractional t, Monoid e
            ,MonadReader GameParams m)
            => Wire s e m Double [Rect]
 ceiling = mkGenN $ \_ -> do
   sl <- liftM segmentLength ask
-  return (Right [], construct . onEventM ceilingTile . events sl)
+  w  <- liftM scrW ask
+  return (Right [], construct w  . onEventM ceilingTile . events sl)
   where ceilingTile (x, dt) = do
           gp <- ask
           (y :: Double) <- getRandomR (ceilingRange gp)
           return $ Rect (V2 x 0) (V2 (n $ dt * scrollSpeed gp) (n y))
-
 
 obsticles :: (MonadRandom m, HasTime t s, Fractional t
              ,Monoid e, MonadReader GameParams m) =>
              Wire s e m Double [Rect]
 obsticles = mkGenN $ \_ -> do
   gp <- ask
-  return (Right [], construct
+  return (Right [], construct (scrW gp)
                     . onEventM (toRect (0,0) (obsticleRange gp)
                                 (obsticleHeights gp) (10,100))
                     . events (0.75, 1.75))
@@ -99,7 +80,7 @@ scroll :: (Fractional b, HasTime b1 s, Monoid e, MonadReader GameParams m) =>
 scroll =
   mkGenN $ \_ -> do
     gp <- ask
-    return (Left mempty, arr realToFrac . (time*pure (scrollSpeed gp))+screenW)
+    return (Left mempty, arr realToFrac . (time*pure (scrollSpeed gp))+scrW gp)
 
 
 --------------------------------------------------------------------------------
@@ -115,11 +96,12 @@ toRect xcord ycord width height (dx, _)= do
 
 
 --------------------------------------------------------------------------------
-construct :: (Monad m, Monoid e) => Wire s e m (Event Rect) [Rect]
-construct = hold . accumE append []
+construct :: (Monad m, Monoid e) =>
+             Double -> Wire s e m (Event Rect) [Rect]
+construct lim  = hold . accumE append []
  where outOfRangeThreshhold = 1000
-       append xs x@(Rect (V2 x0 _) _ ) =
-        x : filter (\(Rect (V2 x1 _)_) ->x1>=x0-screenW-outOfRangeThreshhold) xs
+       append xs x@(Rect (V2 x0 _) _ ) = 
+        x : filter (\(Rect (V2 x1 _)_) ->x1>=x0-lim-outOfRangeThreshhold) xs
 
 
 --------------------------------------------------------------------------------

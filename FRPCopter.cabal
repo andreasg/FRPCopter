@@ -16,9 +16,9 @@ executable heli
         RankNTypes
         ScopedTypeVariables
         GeneralizedNewtypeDeriving
-  hs-source-dirs:      src/
+  hs-source-dirs:      src/ src/FRPCopter/
   main-is:             Main.hs
-  other-modules: Params, Level
+  other-modules: FRPCopter.Types, FRPCopter.Level
   ghc-options: -rtsopts -threaded
   build-depends:       
     base == 4.6.*, 
