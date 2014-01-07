@@ -1,5 +1,6 @@
 module Params where
 
+--------------------------------------------------------------------------------
 screenW :: Num a => a
 screenW = 800
 
@@ -9,6 +10,7 @@ screenH = 600
 bpp :: Num a => a
 bpp = 32
 
+--------------------------------------------------------------------------------
 data GameParams = GameParams {
     scrollSpeed :: Num a => a
   , segmentLength :: (Double, Double)
