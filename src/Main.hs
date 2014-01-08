@@ -8,7 +8,6 @@ import FRPCopter.Level
 import Linear
 import qualified Control.Monad as CM
 import qualified Graphics.UI.SDL as SDL
-import qualified Graphics.UI.SDL.Primitives as SDLPrim
 import qualified Graphics.UI.SDL.Image as IMG
 import Control.Monad.Reader (MonadReader)
 import qualified Control.Monad.Reader as CMR
