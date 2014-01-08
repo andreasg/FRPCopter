@@ -30,6 +30,9 @@ defaultGameParams = GameParams {
   , scrH = screenH
   , scrW = screenW
   , bpp = 32
+  , accel = 240
+  , initGravity = 200
+  , gravityForce = 2500
   }
   where
     screenW :: Num a => a
@@ -53,12 +56,29 @@ command k = between . arr (\(on,off) -> ((), on, off)) . (keyDown k &&& keyUp k)
 upAction :: (Monoid e, Monad m) => Wire s e m SDL.Event (Event SDL.Event)
 upAction = keyDown SDL.SDLK_UP <& keyDown SDL.SDLK_SPACE
 
-up, down, east, west, quit :: (Monoid e, Monad m) => Wire s e m SDL.Event ()
-up = command SDL.SDLK_UP <|> command SDL.SDLK_SPACE
-down = command SDL.SDLK_DOWN
-east = command SDL.SDLK_RIGHT
-west = command SDL.SDLK_LEFT
+quit :: (Monoid e, Monad m) => Wire s e m SDL.Event ()
 quit = command SDL.SDLK_ESCAPE
+
+up :: (Monoid e, Monad m) => Wire s e m SDL.Event ()
+up = command SDL.SDLK_UP <|> command SDL.SDLK_SPACE
+
+westVec :: (MonadReader GameParams m, Monoid e) => Wire s e m SDL.Event (V2 Double)
+westVec = directionVec (\a -> V2 (-a) 0) (command SDL.SDLK_LEFT)
+
+eastVec :: (MonadReader GameParams m, Monoid e) => Wire s e m SDL.Event (V2 Double)
+eastVec = directionVec (\a -> V2 a 0) (command SDL.SDLK_RIGHT)
+
+
+upVec :: (MonadReader GameParams m, Monoid e) => Wire s e m SDL.Event (V2 Double)
+upVec = directionVec (\a -> V2 0 (-a)) up
+
+directionVec :: (MonadReader GameParams m, Monoid e) =>
+     (Double -> V2 Double) -> Wire s e m a b -> Wire s e m a (V2 Double)
+directionVec toV c = mkGenN $ \_ -> do
+  gp <- CMR.ask
+  return (Right neutral, pure (toV (accel gp)) . c <|> pure neutral)
+  where neutral = V2 0 0
+
 
 
 --------------------------------------------------------------------------------
@@ -119,9 +139,11 @@ game = pure Ending . quit <|>  (mkGenN $ \_ -> CMR.ask >>= \gp ->  return (Left 
         where
         run gp  = proc e -> do sp <- (scroll - (scrW gp)) -< ()
                                (o, (c, l))  <- level -< ()
-                               p <- position -< (e, 300)
+                               p <- position -< e
+                               let scr = Rect (V2 sp 0) (V2 (scrW gp) (scrH gp))
                                collide <- isColliding -< (p, (o ++ c ++ l))
-                               returnA -< Running (sp, (o, (c, l)), p) (not collide)
+                               within  <- isColliding -< (p, [scr])
+                               returnA -< Running (sp, (o, (c, l)), p) (not collide && within)
 
 isColliding :: Arrow a => a (V2 Double, [Rect]) Bool
 isColliding = arr $ \(pos, rs) -> any (contains pos) rs
@@ -129,23 +151,25 @@ isColliding = arr $ \(pos, rs) -> any (contains pos) rs
 
 --------------------------------------------------------------------------------
 acceleration :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m)
-                => Wire s e m (SDL.Event, Double) (V2 Double)
-acceleration= proc (cmd, acc) -> do
-  base   <- baseAcceleration -< ()
-  up'     <- arr (V2 0 . negate . snd) . first up        <|> neutral -< (cmd, acc)
-  down'   <- arr (V2 0 . snd) . first down               <|> neutral -< (cmd, acc)
-  east'   <- arr (flip V2 0 . snd) . first east          <|> neutral -< (cmd, acc)
-  west'   <- arr (flip V2 0 . negate . snd) . first west <|> neutral -< (cmd, acc)
-  returnA -< foldl1 (^+^) [base,up',down',east',west']
-  where neutral = pure $ V2 0 0
+                => Wire s e m SDL.Event (V2 Double)
+acceleration= proc cmd -> do
+  base    <- baseAcceleration -< ()
+  up'     <- upVec -< cmd
+  east   <- eastVec -< cmd
+  west   <- westVec -< cmd
+  returnA -< foldl1 (^+^) [base,up',east,west]
+
 
 gravityVector :: (HasTime t s, Monoid e
                  ,MonadRandom m, MonadReader GameParams m) =>
-                 Wire s e m (SDL.Event, Double) (V2 Double)
-gravityVector = (integral (V2 0 100) . pure (V2 0 2000)
-                   . first (until . (pure () &&& upAction)))
-                --> pure (V2 0 0) . first up
-                --> gravityVector
+                 Wire s e m SDL.Event (V2 Double)
+gravityVector = mkGenN $ \_ -> do
+  gp <- CMR.ask
+  return (Right (V2 0 0), (integral (V2 0 (initGravity gp))
+                           . pure (V2 0 (gravityForce gp))
+                           . (until . (pure () &&& upAction)))
+                --> pure (V2 0 0) . up
+                --> gravityVector)
 
 baseAcceleration :: (Monoid e, MonadRandom m, CMR.MonadReader GameParams m) =>
                     Wire s e m a (V2 Double)
@@ -154,7 +178,7 @@ baseAcceleration = mkGen_ $ \_ ->
      return . Right $ V2 (scrollSpeed gp) 0
 
 position :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m)
-            => Wire s e m (SDL.Event, Double) (V2 Double)
+            => Wire s e m SDL.Event (V2 Double)
 position = integral (V2 100 100) . (arr (uncurry (^+^)))
            . (gravityVector  &&& acceleration)
 --------------------------------------------------------------------------------

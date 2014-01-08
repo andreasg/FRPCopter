@@ -18,6 +18,9 @@ data GameParams = GameParams {
   , scrW :: Num a => a
   , scrH :: Num a => a
   , bpp :: Int
+  , accel :: Double
+  , gravityForce :: Double
+  , initGravity :: Double    
  }
 
 
