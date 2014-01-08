@@ -32,6 +32,7 @@ data Game = Running (Double, ([Rect], ([Rect], [Rect])), V2 Double) Bool
 --------------------------------------------------------------------------------
 class CanContain a where
   contains :: V2 Double -> a -> Bool
+  overlapping :: a -> a -> Bool
 
 
 --------------------------------------------------------------------------------
@@ -41,6 +42,16 @@ data Rect = Rect (V2 Double) (V2 Double)
 instance CanContain Rect where
   contains (V2 x y) (Rect (V2 x' y') (V2 w h)) =    x' <= x && x <= (x'+w)
                                                  && y' <= y && y <= (y'+h)
+  overlapping r0@(Rect (V2 x0 y0) (V2 w0 h0))
+              r1@(Rect (V2 x1 y1) (V2 w1 h1)) = contains (V2 x0 y0) r1 ||
+                                                contains (V2 (x0) (y0+h0)) r1 ||
+                                                contains (V2 (x0+w0) (y0)) r1 ||
+                                                contains (V2 (x0+w0) (y0+h0)) r1 ||
+
+                                                contains (V2 x1 y1) r0 ||
+                                                contains (V2 (x1) (y1+h1)) r0 ||
+                                                contains (V2 (x1+w1) (y1)) r0 ||                                                
+                                                contains (V2 (x1+w1) (y1+h1)) r0
 
 
 --------------------------------------------------------------------------------

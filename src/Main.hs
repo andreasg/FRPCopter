@@ -9,6 +9,7 @@ import Linear
 import qualified Control.Monad as CM
 import qualified Graphics.UI.SDL as SDL
 import qualified Graphics.UI.SDL.Primitives as SDLPrim
+import qualified Graphics.UI.SDL.Image as IMG
 import Control.Monad.Reader (MonadReader)
 import qualified Control.Monad.Reader as CMR
 import Control.Wire
@@ -79,8 +80,6 @@ directionVec toV c = mkGenN $ \_ -> do
   return (Right neutral, pure (toV (accel gp)) . c <|> pure neutral)
   where neutral = V2 0 0
 
-
-
 --------------------------------------------------------------------------------
 main :: IO ()
 main = do
@@ -89,10 +88,12 @@ main = do
   let gp = defaultGameParams
   screen <- SDL.setVideoMode (scrW gp) (scrH gp) (bpp gp) [SDL.HWSurface]
   g <- getStdGen
-  go g screen clockSession_ game
+  heli <- IMG.load "assets/heli.png"
+  (SDL.Rect _ _ w h)  <- SDL.getClipRect heli
+  go g screen clockSession_ (game (V2 (fromIntegral w) (fromIntegral h))) heli
   SDL.quit
   where
-  go g screen s w = do
+  go g screen s w heli = do
     evt <- SDL.pollEvent
     (ds, s') <- stepSession s
     let ((game', w'), g') = runIdentity
@@ -101,60 +102,63 @@ main = do
                              . runGameState
                              $ stepWire w ds (Right evt)
     case game' of
-      Left  _      -> go g' screen s' w'
+      Left  _      -> go g' screen s' w' heli
       Right Ending -> putStrLn "quitting"
       Right stuff@(Running (_,_,(V2 px _)) running) -> do
         clear screen
-        render screen stuff
+        render screen heli stuff
         SDL.flip screen
         if running
-          then go g' screen s' w'
+          then go g' screen s' w' heli
           else do putStrLn ("game over" :: String)
                   putStrLn ("distance covered: " ++ show (round px :: Int))
                   SDL.delay 1000
-
   clear s = CM.void $ SDL.mapRGB (SDL.surfaceGetPixelFormat s) 40 40 40
             >>= SDL.fillRect s Nothing
 
-render :: SDL.Surface -> Game -> IO ()
-render _ Ending = return ()
-render screen (Running stuff _) = render' stuff
+render :: SDL.Surface -> SDL.Surface -> Game -> IO ()
+render _ _ Ending = return ()
+render screen heli (Running stuff _) = render' stuff
   where
     render' (x, (o,(c, f)), (V2 px py)) = do
       green <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 0 255 0 255
       red   <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 255 0 0 255
-      white <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 255 255 255 255
-      SDLPrim.circle screen (round (px - x)) (round py) 10 white
+
       CM.forM_ (map (rectToSDLRect x) c) $ flip (SDL.fillRect screen) green . Just
       CM.forM_ (map (rectToSDLRect x) f) $ flip (SDL.fillRect screen) green . Just
       CM.forM_ (map (rectToSDLRect x) o) $ flip (SDL.fillRect screen) red . Just
+      r@(SDL.Rect _ _ w h) <- SDL.getClipRect heli
+      CM.void $
+        SDL.blitSurface  heli (Just r) screen
+        (Just $ SDL.Rect (round (px-x) ) (round py ) w h)
     rectToSDLRect dx (Rect (V2 x y) (V2 w h)) =
       SDL.Rect (round (x - dx)) (round y) (round w) (round h)
 
 
 --------------------------------------------------------------------------------
 game :: (HasTime t s, Fractional t, MonadReader GameParams m, MonadRandom m)
-     => Wire s () m SDL.Event Game
-game = pure Ending . quit <|>  (mkGenN $ \_ -> CMR.ask >>= \gp ->  return (Left (), run gp))
+     => V2 Double -> Wire s () m SDL.Event Game
+game (V2 pw ph) = pure Ending . quit <|>  (mkGenN $ \_ -> CMR.ask >>= \gp -> return (Left (), run gp))
         where
         run gp  = proc e -> do sp <- (scroll - (scrW gp)) -< ()
                                (o, (c, l))  <- level -< ()
-                               p <- position -< e
-                               let scr = Rect (V2 sp 0) (V2 (scrW gp) (scrH gp))
-                               collide <- isColliding -< (p, (o ++ c ++ l))
-                               within  <- isColliding -< (p, [scr])
+                               p@(V2 px py) <- position -< e
+                               let frame    = Rect (V2 sp 0) (V2 (scrW gp) (scrH gp))
+                                   player = Rect (V2 px py) (V2 pw  ph)
+                               collide <- isColliding -< (player, (o ++ c ++ l))
+                               within  <- isColliding -< (player, [frame])
                                returnA -< Running (sp, (o, (c, l)), p) (not collide && within)
 
-isColliding :: Arrow a => a (V2 Double, [Rect]) Bool
-isColliding = arr $ \(pos, rs) -> any (contains pos) rs
+isColliding :: Arrow a => a (Rect, [Rect]) Bool
+isColliding = arr $ \(r, rs) -> any (overlapping r) rs
 
 
 --------------------------------------------------------------------------------
 acceleration :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m)
                 => Wire s e m SDL.Event (V2 Double)
 acceleration= proc cmd -> do
-  base    <- baseAcceleration -< ()
-  up'     <- upVec -< cmd
+  base   <- baseAcceleration -< ()
+  up'    <- upVec   -< cmd
   east   <- eastVec -< cmd
   west   <- westVec -< cmd
   returnA -< foldl1 (^+^) [base,up',east,west]

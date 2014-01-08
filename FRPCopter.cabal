@@ -28,6 +28,7 @@ executable heli
     SDL == 0.6.*, 
     SDL-ttf == 0.6.*,
     SDL-gfx == 0.6.*,
+    SDL-image == 0.6.*,
     lens == 3.10.*,
     linear == 1.3.*,
     matrix == 0.2.*,
