@@ -6,6 +6,7 @@ import FRPCopter.Types
 import FRPCopter.Level
 
 import Linear
+import Data.Maybe (catMaybes)
 import qualified Control.Monad as CM
 import qualified Graphics.UI.SDL as SDL
 import qualified Graphics.UI.SDL.Image as IMG
@@ -14,9 +15,10 @@ import qualified Control.Monad.Reader as CMR
 import Control.Wire
 import Prelude hiding (id, (.), until)
 import FRP.Netwire
+--import qualified Data.Semigroup as Sg
 import Control.Monad.Random
 
-
+import Control.Category as Cat
 --------------------------------------------------------------------------------
 defaultGameParams :: GameParams
 defaultGameParams = GameParams {
@@ -67,7 +69,6 @@ westVec = directionVec (\a -> V2 (-a) 0) (command SDL.SDLK_LEFT)
 
 eastVec :: (MonadReader GameParams m, Monoid e) => Wire s e m SDL.Event (V2 Double)
 eastVec = directionVec (\a -> V2 a 0) (command SDL.SDLK_RIGHT)
-
 
 upVec :: (MonadReader GameParams m, Monoid e) => Wire s e m SDL.Event (V2 Double)
 upVec = directionVec (\a -> V2 0 (-a)) up
@@ -185,3 +186,28 @@ position :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m)
 position = integral (V2 100 100) . (arr (uncurry (^+^)))
            . (gravityVector  &&& acceleration)
 --------------------------------------------------------------------------------
+
+wires :: (Monad m, Monoid e,HasTime t s, Monoid s) => Wire s e m [Wire s e m () a] [(a, Wire s e m () a)]
+wires = go mempty
+ where go s' =
+          mkGen $ \ds ws -> do
+            let s = mappend s' ds
+            seq s $ do
+             ws' <- CM.forM ws $ \w -> do (r, w') <- stepWire w s (Right ())
+                                          return $ case r of
+                                            Right b -> Just (b, w')
+                                            Left _ -> Nothing
+             return (Right (catMaybes ws'), go s)
+
+  
+particle :: (HasTime t s, Monad m, Monoid e) => Wire s e m a (Event (Wire s e m () String))
+particle = periodic 1 . arr (\t ->  for (t+7)  . pure "part" ) . time
+
+
+particles :: (HasTime t s, Monad m, Monoid e) => Wire s e m a [(String, Wire s e m () String)]
+particles = wires . hold .  accumE (flip (:)) [] . particle
+
+
+fun :: (HasTime t s, Monad m) => Wire s () m a [String]
+fun =  arr (map fst) . particles 
+
