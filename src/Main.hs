@@ -13,12 +13,11 @@ import qualified Graphics.UI.SDL.Image as IMG
 import Control.Monad.Reader (MonadReader)
 import qualified Control.Monad.Reader as CMR
 import Control.Wire
+import Control.Wire.Unsafe.Event
 import Prelude hiding (id, (.), until)
 import FRP.Netwire
---import qualified Data.Semigroup as Sg
 import Control.Monad.Random
 
-import Control.Category as Cat
 --------------------------------------------------------------------------------
 defaultGameParams :: GameParams
 defaultGameParams = GameParams {
@@ -89,11 +88,12 @@ main = do
   screen <- SDL.setVideoMode (scrW gp) (scrH gp) (bpp gp) [SDL.HWSurface]
   g <- getStdGen
   heli <- IMG.load "assets/heli.png"
+  cloud <- IMG.load "assets/cloud.png"  
   (SDL.Rect _ _ w h)  <- SDL.getClipRect heli
-  go g screen clockSession_ (game (V2 (fromIntegral w) (fromIntegral h))) heli
+  go g screen clockSession_ (game (V2 (fromIntegral w) (fromIntegral h))) heli cloud
   SDL.quit
   where
-  go g screen s w heli = do
+  go g screen s w heli cloud = do
     evt <- SDL.pollEvent
     (ds, s') <- stepSession s
     let ((game', w'), g') = runIdentity
@@ -102,35 +102,42 @@ main = do
                              . runGameState
                              $ stepWire w ds (Right evt)
     case game' of
-      Left  _      -> go g' screen s' w' heli
+      Left  _      -> go g' screen s' w' heli cloud
       Right Ending -> putStrLn "quitting"
       Right stuff@(Running (_,_,(V2 px _)) running) -> do
         clear screen
-        render screen heli stuff
+        render screen heli cloud stuff
         SDL.flip screen
         if running
-          then go g' screen s' w' heli
+          then go g' screen s' w' heli cloud
           else do putStrLn ("game over" :: String)
                   putStrLn ("distance covered: " ++ show (round px :: Int))
                   SDL.delay 1000
   clear s = CM.void $ SDL.mapRGB (SDL.surfaceGetPixelFormat s) 40 40 40
             >>= SDL.fillRect s Nothing
 
-render :: SDL.Surface -> SDL.Surface -> Game -> IO ()
-render _ _ Ending = return ()
-render screen heli (Running stuff _) = render' stuff
+render :: SDL.Surface -> SDL.Surface -> SDL.Surface -> Game -> IO ()
+render _ _ _ Ending = return ()
+render screen heli cloud (Running stuff _) = render' stuff
   where
-    render' (x, (o,(c, f)), (V2 px py)) = do
+    render' (x, (o,(c, f), ps), (V2 px py)) = do
       green <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 0 255 0 255
       red   <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 255 0 0 255
 
       CM.forM_ (map (rectToSDLRect x) c) $ flip (SDL.fillRect screen) green . Just
       CM.forM_ (map (rectToSDLRect x) f) $ flip (SDL.fillRect screen) green . Just
       CM.forM_ (map (rectToSDLRect x) o) $ flip (SDL.fillRect screen) red . Just
+
       r@(SDL.Rect _ _ w h) <- SDL.getClipRect heli
+      cld@(SDL.Rect _ _ cw ch) <- SDL.getClipRect cloud
+
+      CM.forM_ ps $ \(V2 cx cy) ->
+        SDL.blitSurface cloud (Just cld) screen
+          (Just $ SDL.Rect (round (cx-x)-cw) (round cy) cw ch)
       CM.void $
         SDL.blitSurface  heli (Just r) screen
-        (Just $ SDL.Rect (round (px-x) ) (round py ) w h)
+          (Just $ SDL.Rect (round (px-x) ) (round py ) w h)
+       
     rectToSDLRect dx (Rect (V2 x y) (V2 w h)) =
       SDL.Rect (round (x - dx)) (round y) (round w) (round h)
 
@@ -141,13 +148,14 @@ game :: (HasTime t s, Fractional t, MonadReader GameParams m, MonadRandom m)
 game (V2 pw ph) = pure Ending . quit <|>  (mkGenN $ \_ -> CMR.ask >>= \gp -> return (Left (), run gp))
         where
         run gp  = proc e -> do sp <- (scroll - (scrW gp)) -< ()
-                               (o, (c, l))  <- level -< ()
                                p@(V2 px py) <- position -< e
                                let frame    = Rect (V2 sp 0) (V2 (scrW gp) (scrH gp))
                                    player = Rect (V2 px py) (V2 pw  ph)
-                               collide <- isColliding -< (player, (o ++ c ++ l))
-                               within  <- isColliding -< (player, [frame])
-                               returnA -< Running (sp, (o, (c, l)), p) (not collide && within)
+                               (o, (c, l))  <- level -< ()
+                               collide      <- isColliding -< (player, (o ++ c ++ l))
+                               within       <- isColliding -< (player, [frame])
+                               smoke        <- smokeTrail  -< p
+                               returnA -< Running (sp, (o, (c, l), smoke), p) (not collide && within)
 
 isColliding :: Arrow a => a (Rect, [Rect]) Bool
 isColliding = arr $ \(r, rs) -> any (overlapping r) rs
@@ -157,10 +165,8 @@ isColliding = arr $ \(r, rs) -> any (overlapping r) rs
 acceleration :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m)
                 => Wire s e m SDL.Event (V2 Double)
 acceleration= proc cmd -> do
-  base   <- baseAcceleration -< ()
-  up'    <- upVec   -< cmd
-  east   <- eastVec -< cmd
-  west   <- westVec -< cmd
+  (base, (up', (east, west))) <-
+    baseAcceleration &&& upVec &&& eastVec &&& westVec -< cmd
   returnA -< foldl1 (^+^) [base,up',east,west]
 
 
@@ -178,8 +184,7 @@ gravityVector = mkGenN $ \_ -> do
 baseAcceleration :: (Monoid e, MonadRandom m, CMR.MonadReader GameParams m) =>
                     Wire s e m a (V2 Double)
 baseAcceleration = mkGen_ $ \_ ->
-  do gp <- CMR.ask
-     return . Right $ V2 (scrollSpeed gp) 0
+  CMR.ask >>= \gp -> return . Right $ V2 (scrollSpeed gp) 0
 
 position :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m)
             => Wire s e m SDL.Event (V2 Double)
@@ -187,27 +192,16 @@ position = integral (V2 100 100) . (arr (uncurry (^+^)))
            . (gravityVector  &&& acceleration)
 --------------------------------------------------------------------------------
 
-wires :: (Monad m, Monoid e,HasTime t s, Monoid s) => Wire s e m [Wire s e m () a] [(a, Wire s e m () a)]
-wires = go mempty
- where go s' =
-          mkGen $ \ds ws -> do
-            let s = mappend s' ds
-            seq s $ do
-             ws' <- CM.forM ws $ \w -> do (r, w') <- stepWire w s (Right ())
-                                          return $ case r of
-                                            Right b -> Just (b, w')
-                                            Left _ -> Nothing
-             return (Right (catMaybes ws'), go s)
 
-  
-particle :: (HasTime t s, Monad m, Monoid e) => Wire s e m a (Event (Wire s e m () String))
-particle = periodic 1 . arr (\t ->  for (t+7)  . pure "part" ) . time
+wires :: (Monad m, Monoid e,HasTime t s, Monoid s) => Wire s e m (Event (Wire s e m () a)) [a]
+wires = go []
+  where go ws =
+          mkGen $ \ds ev -> do
+            let nw = event ws (flip (:) ws) ev
+            ws' <- CM.liftM catMaybes . CM.forM nw $ \w -> do
+              (r, w') <- stepWire w ds $ Right ()
+              return $ either (const Nothing) (\b -> Just (b,w')) r
+            return (Right (map fst ws'), go (map snd ws'))
 
-
-particles :: (HasTime t s, Monad m, Monoid e) => Wire s e m a [(String, Wire s e m () String)]
-particles = wires . hold .  accumE (flip (:)) [] . particle
-
-
-fun :: (HasTime t s, Monad m) => Wire s () m a [String]
-fun =  arr (map fst) . particles 
-
+smokeTrail :: (HasTime t s, Fractional t, Monad m) => Wire s () m (V2 Double) [V2 Double]
+smokeTrail = wires . periodic (0.075) . arr (\x -> for 1 . pure x)

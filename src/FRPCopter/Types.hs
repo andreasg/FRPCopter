@@ -25,7 +25,7 @@ data GameParams = GameParams {
 
 
 --------------------------------------------------------------------------------
-data Game = Running (Double, ([Rect], ([Rect], [Rect])), V2 Double) Bool
+data Game = Running (Double, ([Rect], ([Rect], [Rect]), [V2 Double]), V2 Double) Bool
           | Ending
 
 
