@@ -22,10 +22,10 @@ import Data.Fixed (mod')
 --------------------------------------------------------------------------------
 defaultGameParams :: GameParams
 defaultGameParams = GameParams {
-    scrollSpeed = 240
+    scrollSpeed = 200
   , segmentLength = (0.05,0.7)
-  , ceilingRange = (0, screenH / 3)
-  , floorRange = (screenH - (screenH / 3),  screenH)
+  , ceilingRange = (0, screenH / 4)
+  , floorRange = (screenH - (screenH / 4),  screenH)
   , outOfRangeLimit = 100
   , obsticleRange = (screenH / 3, screenH - (screenH / 3))
   , obsticleHeights = (10, 60)
@@ -180,7 +180,7 @@ render fn screen heli cloud background stuff = render' stuff
           (Just $ SDL.Rect (round (px-x) ) (round py ) w h)
 
 
-      score <- TTF.renderTextBlended fn ("Distance: " ++ show (round px :: Int)) (SDL.Color 255 255 255)
+      score <- TTF.renderTextBlended fn ("Distance: " ++ show (round x :: Int)) (SDL.Color 255 255 255)
       (SDL.Rect _ _ sw sh) <- SDL.getClipRect score
       CM.void $ SDL.blitSurface score Nothing screen (Just $ SDL.Rect (scw - sw - 15) 15 sw sh)
 
@@ -280,7 +280,7 @@ fallWire gp = integral (V2 0 (initGravity gp))
 holdWire :: (HasTime t s, Monoid e, Monad m) =>
             GameParams -> V2 Double -> Wire s e m SDL.Event (V2 Double)
 holdWire gp v0 = arr (\(x,y) -> max x y)
-          . (integral v0 . pure (V2 0 (negate $ 2*gravityForce gp)) &&& pure (V2 0 0))
+          . (integral v0 . pure (V2 0 (negate $ 1.2*gravityForce gp)) &&& pure (V2 0 0))
           . up
 --------------------------------------------------------------------------------
 
@@ -319,9 +319,20 @@ wires = go []
               return $ either (const Nothing) (\b -> Just (b,w')) r
             return (Right (map fst ws'), go (map snd ws'))
 
-smokeTrail :: (HasTime t s, Fractional t, Monad m) =>
+smokeTrail :: (HasTime t s, Fractional t, MonadRandom m) =>
               Wire s () m Point [Particle]
-smokeTrail = wires . periodic (0.09) . arr (\x -> for 1 . pure (SmokePuff x))
+smokeTrail = wires . periodic (0.09) . arr (\x -> for' (0.25,1.5) . pure (SmokePuff x))
+
+
+for' :: (HasTime t s, Fractional t, Monoid e, MonadRandom m) => (Double, Double) -> Wire s e m a a
+for' interv  = mkGenN $ \a -> do
+  t <- getRandomR interv
+  return (Right a, go (realToFrac t))
+  where go t' = mkPure $ \ds x ->
+                  let t = t' - dtime ds in
+                  if t <= 0
+                   then (Left mempty, mkEmpty)
+                   else (Right x, go t)
 --------------------------------------------------------------------------------
 
 
