@@ -4,7 +4,7 @@ import Linear hiding (point)
 import Control.Monad.Reader (ReaderT, MonadReader)
 import Control.Monad.Random
 import Control.Monad.Identity
-
+import Data.Monoid (Monoid(..))
 
 --------------------------------------------------------------------------------
 data GameParams = GameParams {
@@ -42,9 +42,17 @@ data Game = Running { cameraPos :: Double
                     , particles :: [Particle]
                     , playerPos :: Point
                     , running :: Bool
-                    , bgSlice :: (Rect, Maybe Rect) }
+                    , bgSlice :: (Rect, Maybe Rect)
+                    , playerFrame :: Int }
+          | MainMenu Double
           | Ending
 
+
+data GameOver = GameOver Integer deriving Show
+
+instance Monoid GameOver where
+  mempty = GameOver 0
+  mappend (GameOver n0) (GameOver n1) = GameOver (max n0 n1)
 
 data Level = Level { floorRects :: [Rect]
                    , ceilingRects :: [Rect]

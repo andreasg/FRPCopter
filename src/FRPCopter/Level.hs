@@ -78,12 +78,12 @@ obsticles = mkGenN $ \_ -> do
 
 
 --------------------------------------------------------------------------------
-scroll :: (Fractional b, HasTime b1 s, Monoid e, MonadReader GameParams m) =>
+scroll :: (Fractional b, HasTime t s, Monoid e, MonadReader GameParams m) =>
           Wire s e m a b
 scroll =
   mkGenN $ \_ -> do
     gp <- ask
-    return (Left mempty, arr realToFrac . (time*pure (scrollSpeed gp))+scrW gp)
+    return (Right (scrW gp), arr realToFrac . (time*pure (scrollSpeed gp))+scrW gp)
 
 
 --------------------------------------------------------------------------------
