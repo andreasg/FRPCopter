@@ -34,7 +34,10 @@ events interv = go (0 :: Double) 0
 levelW :: (Fractional t, Monoid e, HasTime t s
          ,MonadReader GameParams m, MonadRandom m) =>
          Wire s e m a Level
-levelW = scroll >>> obsticles &&& ceiling &&& floor >>> arr (\(o, (c,f))  -> Level { obsticleRects = o, ceilingRects = c, floorRects = f})
+levelW = scroll >>> obsticles &&& ceiling &&& floor >>>
+         arr (\(o, (c,f)) -> Level { obsticleRects = o
+                                   , ceilingRects  = c
+                                   , floorRects    = f})
 
 
 --------------------------------------------------------------------------------
@@ -48,8 +51,8 @@ floor = mkGenN $ \_ -> do
   where floorTile (x, dt) = do
           gp <- ask
           (y :: Double) <- getRandomR (floorRange gp)
-          return $ Rect (mkPoint (n x)                    (n y))
-                        (V2 (n $ dt* scrollSpeed gp) (n $ scrH gp - y))
+          return $ Rect (mkPoint (n x -1)                    (n y))
+                        (V2 (n $ 1 + dt* scrollSpeed gp) (n $ scrH gp - y))
 
 ceiling :: (MonadRandom m, HasTime t s, Fractional t, Monoid e
            ,MonadReader GameParams m)
@@ -61,7 +64,7 @@ ceiling = mkGenN $ \_ -> do
   where ceilingTile (x, dt) = do
           gp <- ask
           (y :: Double) <- getRandomR (ceilingRange gp)
-          return $ Rect (mkPoint x 0) (V2 (n $ dt * scrollSpeed gp) (n y))
+          return $ Rect (mkPoint (x-1) 0) (V2 (n $ 1+ dt * scrollSpeed gp) (n y))
 
 obsticles :: (MonadRandom m, HasTime t s, Fractional t
              ,Monoid e, MonadReader GameParams m) =>

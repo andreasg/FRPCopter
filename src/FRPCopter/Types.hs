@@ -20,7 +20,9 @@ data GameParams = GameParams {
   , bpp :: Int
   , accel :: Double
   , gravityForce :: Double
-  , initGravity :: Double    
+  , initGravity :: Double
+  , bgWidth :: Double
+  , playerSize :: V2 Double
  }
 --------------------------------------------------------------------------------                  
 
@@ -39,7 +41,8 @@ data Game = Running { cameraPos :: Double
                     , level :: Level
                     , particles :: [Particle]
                     , playerPos :: Point
-                    , running :: Bool }
+                    , running :: Bool
+                    , bgSlice :: (Rect, Maybe Rect) }
           | Ending
 
 
