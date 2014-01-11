@@ -18,8 +18,7 @@ import Prelude hiding (id, (.), until)
 import FRP.Netwire
 import Control.Monad.Random
 import Data.Fixed (mod')
-import Data.Time
-import Debug.Trace
+
 
 --------------------------------------------------------------------------------
 defaultGameParams :: GameParams
@@ -67,13 +66,13 @@ command :: (Monoid e, Monad m) => SDL.SDLKey -> Wire s e m SDL.Event ()
 command k = between . arr (\(on,off) -> ((), on, off)) . (keyDown k &&& keyUp k)
 
 upAction :: (Monoid e, Monad m) => Wire s e m SDL.Event (Event SDL.Event)
-upAction = keyDown SDL.SDLK_UP <& keyDown SDL.SDLK_SPACE
+upAction = keyDown SDL.SDLK_SPACE
 
 quit :: (Monoid e, Monad m) => Wire s e m SDL.Event SDL.Event
 quit = hold . keyDown  SDL.SDLK_ESCAPE
 
 up :: (Monoid e, Monad m) => Wire s e m SDL.Event ()
-up = command SDL.SDLK_UP <|> command SDL.SDLK_SPACE
+up = command SDL.SDLK_SPACE
 
 
 --------------------------------------------------------------------------------
@@ -109,7 +108,6 @@ main = do
   fn     <- TTF.openFont "assets/Ubuntu-R.ttf" 28
   heli0   <- IMG.load "assets/heli0.png"
   heli1   <- IMG.load "assets/heli1.png"  
-  
   cloud  <- IMG.load "assets/cloud.png"
   background <- IMG.load "assets/bg.png"
   (SDL.Rect _ _ w h)  <- SDL.getClipRect heli0
@@ -222,8 +220,7 @@ grow d (SDL.Rect x y w h) = SDL.Rect (x-d) (y-d) (w+d*2) (h+d*2)
 --------------------------------------------------------------------------------
 runGame :: (HasTime t s, MonadRandom m,  MonadReader GameParams m, Fractional t) =>
            Integer -> Wire s GameOver m SDL.Event Game
-runGame score = pure Ending . quit <|>
-                go ((until . (pure (MainMenu (fromInteger score)) &&& upAction)) --> game)
+runGame score = go (pure Ending . quit <|> (until . (pure (MainMenu (fromInteger score)) &&& upAction)) --> (pure Ending . quit <|> game))
   where go w = mkGen $ \ds ev -> do
           (o, w') <- stepWire w ds (Right ev)
           case o of
@@ -338,8 +335,8 @@ acceleration = proc cmd -> do
 
 baseAcceleration :: (Monoid e, MonadRandom m, CMR.MonadReader GameParams m) =>
                     Wire s e m a (V2 Double)
-baseAcceleration = mkGen_ $ \_ ->
-  CMR.ask >>= \gp -> return . Right $ V2 (scrollSpeed gp) 0
+baseAcceleration = mkGenN $ \_ ->
+  CMR.ask >>= \gp -> return  (Right $ V2 (scrollSpeed gp) 0, mkConst (Right (V2 (scrollSpeed gp) 0)))
 
 position :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m)
             => Wire s e m SDL.Event Point
