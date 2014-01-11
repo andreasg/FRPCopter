@@ -153,7 +153,7 @@ render fn screen _ _ background (MainMenu score) = do
   SDL.blitSurface background (Just sc) screen (Just sc)
   let white = SDL.Color 255 255 255
       grey = SDL.Color 140 140 140
-  drawText screen fn "welcome to FRPHeli!" (380, 100) white
+  drawText screen fn "welcome to FRPCopter!" (380, 100) white
   drawText screen fn "press Space to play" (390, 200) grey
   drawText screen fn "(or Escape to quit)" (394, 230)  grey
   CM.when (score > 0) . CM.void $ drawText screen fn
