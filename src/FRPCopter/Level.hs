@@ -52,7 +52,7 @@ floor = mkGenN $ \_ -> do
           gp <- ask
           (y :: Double) <- getRandomR (floorRange gp)
           return $ Rect (mkPoint (n x -1)                    (n y))
-                        (V2 (n $ 1 + dt* scrollSpeed gp) (n $ scrH gp - y))
+                        (V2 (n $ 5 + dt* scrollSpeed gp) (n $ scrH gp - y))
 
 ceiling :: (MonadRandom m, HasTime t s, Fractional t, Monoid e
            ,MonadReader GameParams m)
@@ -64,7 +64,7 @@ ceiling = mkGenN $ \_ -> do
   where ceilingTile (x, dt) = do
           gp <- ask
           (y :: Double) <- getRandomR (ceilingRange gp)
-          return $ Rect (mkPoint (x-1) 0) (V2 (n $ 1+ dt * scrollSpeed gp) (n y))
+          return $ Rect (mkPoint (x-1) 0) (V2 (n $ 5 + dt * scrollSpeed gp) (n y))
 
 obsticles :: (MonadRandom m, HasTime t s, Fractional t
              ,Monoid e, MonadReader GameParams m) =>

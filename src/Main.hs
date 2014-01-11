@@ -9,6 +9,7 @@ import Data.Maybe (catMaybes)
 import qualified Control.Monad as CM
 import qualified Graphics.UI.SDL as SDL
 import qualified Graphics.UI.SDL.Image as IMG
+import qualified Graphics.UI.SDL.TTF as TTF
 import Control.Monad.Reader (MonadReader)
 import qualified Control.Monad.Reader as CMR
 import Control.Wire
@@ -39,7 +40,7 @@ defaultGameParams = GameParams {
   }
   where
     screenW :: Num a => a
-    screenW = 800
+    screenW = 1024
     screenH :: Num a => a
     screenH = 600
 --------------------------------------------------------------------------------
@@ -98,20 +99,22 @@ directionVec toV c = mkGenN $ \_ -> do
 main :: IO ()
 main = do
   SDL.init [SDL.InitEverything]
+  TTF.init
   SDL.setCaption "FRPCopter" ""
   let gp' = defaultGameParams
   screen <- SDL.setVideoMode (scrW gp') (scrH gp') (bpp gp') [SDL.HWSurface]
   g      <- getStdGen
+  fn     <- TTF.openFont "assets/Ubuntu-R.ttf" 28
   heli   <- IMG.load "assets/heli.png"
   cloud  <- IMG.load "assets/cloud.png"
   background <- IMG.load "assets/bg.png"
   (SDL.Rect _ _ w h)  <- SDL.getClipRect heli
   (SDL.Rect _ _ bgw _) <- SDL.getClipRect background
   let gp = defaultGameParams { bgWidth = fromIntegral bgw, playerSize = V2 (fromIntegral w) (fromIntegral h) }
-  go gp g screen clockSession_ game heli cloud background
+  go gp g screen clockSession_ game heli cloud background fn
   SDL.quit
   where
-  go gp g screen s w heli cloud background = do
+  go gp g screen s w heli cloud background fn = do
     evt <- SDL.pollEvent
     (ds, s') <- stepSession s
     let ((game', w'), g') = runIdentity
@@ -120,28 +123,27 @@ main = do
                              . runGameState
                              $ stepWire w ds (Right evt)
     case game' of
-      Left  _      -> go gp g' screen s' w' heli cloud background
+      Left  _      -> go gp g' screen s' w' heli cloud background fn
       Right Ending -> putStrLn "quitting"
       Right stuff -> do
         clear screen
-        render screen heli cloud background stuff 
+        render fn screen heli cloud background stuff 
         SDL.flip screen
         if running stuff
-          then go gp g' screen s' w' heli cloud background
+          then go gp g' screen s' w' heli cloud background fn
           else do putStrLn ("game over" :: String)
-                  putStrLn ("distance covered: " ++ show ( (playerPos $ stuff)))
-                  SDL.delay 1000
+                  SDL.delay 2000
   clear s = CM.void $ SDL.mapRGB (SDL.surfaceGetPixelFormat s) 40 40 40
             >>= SDL.fillRect s Nothing
 
 
-render :: SDL.Surface -> SDL.Surface -> SDL.Surface -> SDL.Surface -> Game -> IO ()
-render _ _ _ _ Ending = return ()
-render screen heli cloud background stuff = render' stuff
+render :: TTF.Font -> SDL.Surface -> SDL.Surface -> SDL.Surface -> SDL.Surface -> Game -> IO ()
+render _ _ _ _ _ Ending = return ()
+render fn screen heli cloud background stuff = render' stuff
   where
     render' g = do
       let bgS = bgSlice g
-      sc <- SDL.getClipRect screen
+      sc@(SDL.Rect _ _ scw _) <- SDL.getClipRect screen
       case bgS of
         (r0, Nothing) -> CM.void $ SDL.blitSurface background (Just (rectToSDLRect 0 r0)) screen (Just sc)
         (r0, Just r1) -> do
@@ -151,15 +153,19 @@ render screen heli cloud background stuff = render' stuff
           CM.void $ SDL.blitSurface background (Just (rectToSDLRect 0 r1)) screen (Just $ SDL.Rect (round w0) 0 (round w1) (round h1))
 
 
-      wallColor <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 35 70 120 255          
+      border <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 50 50 50 200
+      wallColor <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 150 80 30 255
       red   <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 160 20 20 255
       let x = cameraPos g
-      CM.forM_ (map (rectToSDLRect x) (ceilingRects . level $ g)) $
-        flip (SDL.fillRect screen) wallColor . Just
-      CM.forM_ (map (rectToSDLRect x) (floorRects . level $ g)) $
-        flip (SDL.fillRect screen) wallColor . Just
-      CM.forM_ (map (rectToSDLRect x) (obsticleRects . level $ g)) $
-        flip (SDL.fillRect screen) red . Just
+      CM.forM_ (map (rectToSDLRect x) (ceilingRects . level $ g)) $ \r -> do
+        flip (SDL.fillRect screen) border (Just (grow 1 r))
+        flip (SDL.fillRect screen) red (Just r)
+      CM.forM_ (map (rectToSDLRect x) (floorRects . level $ g)) $ \r -> do
+        flip (SDL.fillRect screen) border (Just (grow 1 r))
+        flip (SDL.fillRect screen) red (Just r)      
+      CM.forM_ (map (rectToSDLRect x) (obsticleRects . level $ g)) $ \r -> do
+        flip (SDL.fillRect screen) border (Just $ grow 1 r)
+        flip (SDL.fillRect screen) wallColor (Just r)
 
       r@(SDL.Rect _ _ w h) <- SDL.getClipRect heli
       cld@(SDL.Rect _ _ cw ch) <- SDL.getClipRect cloud
@@ -174,11 +180,16 @@ render screen heli cloud background stuff = render' stuff
           (Just $ SDL.Rect (round (px-x) ) (round py ) w h)
 
 
-         
+      score <- TTF.renderTextBlended fn ("Distance: " ++ show (round px :: Int)) (SDL.Color 255 255 255)
+      (SDL.Rect _ _ sw sh) <- SDL.getClipRect score
+      CM.void $ SDL.blitSurface score Nothing screen (Just $ SDL.Rect (scw - sw - 15) 15 sw sh)
 
     rectToSDLRect dx p =
       let ((x,y), (w, h)) = unRect p
       in SDL.Rect (round (x - dx)) (round y) (round w) (round h)
+
+grow :: Int -> SDL.Rect -> SDL.Rect
+grow d (SDL.Rect x y w h) = SDL.Rect (x-d) (y-d) (w+d*2) (h+d*2)
 --------------------------------------------------------------------------------
 
 
