@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 
-module FRPCopter.Level (levelW, GameState(..), Rect(..), CanContain(..), scroll) where
+module FRPCopter.Level (levelW, GameState(..), Rect(..), CanContain(..), scroll, events) where
 
 import FRPCopter.Types
 
@@ -17,16 +17,16 @@ import Linear (V2(..))
 
 --------------------------------------------------------------------------------
 events :: (HasTime t s, Fractional t, MonadRandom m, Monoid e) =>
-     (Double, Double) -> Wire s e m Double (Event (Double, Double))
+     (Double, Double) -> Wire s e m a (Event (a, Double))
 events interv = go (0 :: Double) 0
   where go tt t =
-          mkGen $ \ds xcord -> do
+          mkGen $ \ds a -> do
             let dt = t - dtime ds
             (nw :: Double) <- getRandomR interv
             let nextWait = n nw
             return $ if dt >  0
                      then (Right NoEvent, go tt dt)
-                     else (Right (Event (fromInteger . round $ xcord, nextWait))
+                     else (Right (Event (a, nextWait))
                           ,go nextWait (mod' dt nextWait))
 
 
