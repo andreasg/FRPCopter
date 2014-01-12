@@ -102,7 +102,7 @@ toRect xcord ycord width height (dx, _)= do
 construct :: (Monad m, Monoid e) =>
              Double -> Wire s e m (Event Rect) [Rect]
 construct lim  = hold . accumE append []
- where outOfRangeThreshhold = 1000
+ where outOfRangeThreshhold = 200
        append xs x@(Rect ((Point (V2 x0 _))) _ ) =
         x : filter (\(Rect (Point (V2 x1 _))_) ->x1>=x0-lim-outOfRangeThreshhold) xs
 
