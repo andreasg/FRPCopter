@@ -447,18 +447,7 @@ bg w h bgW =
 --------------------------------------------------------------------------------
 -- animation-ticker
 --------------------------------------------------------------------------------
-animation' :: (HasTime t s, Monad m, Monoid e, Fractional t) =>
-             Int -> Double -> Wire s e m a Int
-animation' frames fps = go 0
-  where go n = for dt . seq n (pure n)
-               --> go ((n+1) `mod` frames)
-        dt = 1 / realToFrac fps
-
 animation :: (HasTime t s, Monad m, Monoid e, Fractional t) =>
              Int -> Double -> Wire s e m a Int
-animation frames fps =
-  seq frames' (hold . periodicList (1 / realToFrac fps) frames')
-  where frames' = concat . repeat $ [0..frames-1]
-                        
-         
+animation n fps = hold . periodicList (1 / realToFrac fps) (cycle [0..n-1])
 --------------------------------------------------------------------------------
