@@ -5,6 +5,8 @@ import Control.Monad.Reader (ReaderT, MonadReader)
 import Control.Monad.Random
 import Control.Monad.Identity
 import Data.Monoid (Monoid(..))
+import qualified Graphics.UI.SDL as SDL
+import qualified Graphics.UI.SDL.TTF as TTF
 
 --------------------------------------------------------------------------------
 data GameParams = GameParams {
@@ -24,39 +26,54 @@ data GameParams = GameParams {
   , bgWidth :: Double
   , playerSize :: V2 Double
  }
---------------------------------------------------------------------------------                  
+
+data Assets = Assets { font :: !TTF.Font
+                     , background :: !SDL.Surface
+                     , heli :: ![SDL.Surface]
+                     , cloud :: !SDL.Surface
+                     , borderColor :: !SDL.Pixel
+                     , wallColor :: !SDL.Pixel
+                     , redColor :: !SDL.Pixel}
+--------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
 newtype GameState g a = GameState {
   runGameState :: ReaderT GameParams (RandT g Identity) a
   } deriving (Monad, MonadReader GameParams, MonadRandom)
---------------------------------------------------------------------------------             
+--------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
 data Particle = SmokePuff Point
 
-data Game = Running { cameraPos :: Double
-                    , level :: Level
-                    , particles :: [Particle]
-                    , playerPos :: Point
-                    , running :: Bool
-                    , bgSlice :: (Rect, Maybe Rect)
-                    , playerFrame :: Int }
+data Game = Running { cameraPos :: !Double
+                    , level :: !Level
+                    , particles :: ![Particle]
+                    , playerPos :: !Point
+                    , bgSlice :: !(Rect, Maybe Rect)
+                    , playerFrame :: !Int }
           | MainMenu Double
           | Ending
 
+emptyGame :: Game
+emptyGame = Running { cameraPos = 0
+                    , level  = Level [] [] []
+                    , particles = []
+                    , playerPos = mkPoint 0 0
+                    , bgSlice = (mkRect 0 0 0 0, Nothing)
+                    , playerFrame = 0}
 
-data GameOver = GameOver Integer deriving Show
+
+data GameOver = GameOver !Integer deriving Show
 
 instance Monoid GameOver where
   mempty = GameOver 0
   mappend (GameOver n0) (GameOver n1) = GameOver (max n0 n1)
 
-data Level = Level { floorRects :: [Rect]
-                   , ceilingRects :: [Rect]
-                   , obsticleRects :: [Rect]}
+data Level = Level { floorRects :: ![Rect]
+                   , ceilingRects :: ![Rect]
+                   , obsticleRects :: ![Rect]}
              deriving (Show)
 
 levelRects :: Level -> [Rect]
@@ -69,7 +86,7 @@ class CanContain a where
   contains :: Point -> a -> Bool
   overlapping :: a -> a -> Bool
 --------------------------------------------------------------------------------
-  
+
 
 --------------------------------------------------------------------------------
 newtype Point = Point (V2 Double)
@@ -103,6 +120,6 @@ instance CanContain Rect where
                        contains (mkPoint (x0+w0) (y0+h0)) r1 ||
                        contains (mkPoint x1 y1) r0 ||
                        contains (mkPoint (x1) (y1+h1)) r0 ||
-                       contains (mkPoint (x1+w1) (y1)) r0 ||                                                
+                       contains (mkPoint (x1+w1) (y1)) r0 ||
                        contains (mkPoint (x1+w1) (y1+h1)) r0
---------------------------------------------------------------------------------                                                
+--------------------------------------------------------------------------------
