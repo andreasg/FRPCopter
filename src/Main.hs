@@ -65,21 +65,7 @@ keyUp k = became $ \e -> case e of
 -- | Produces only while given key is pressed. Messy because the
 --   `Control.Wire.Interval.between` was causing memory-leaks.
 command :: (HasTime t s, Monoid e, Monad m) => SDL.SDLKey -> Wire s e m SDL.Event ()
-command k = go (keyUp k) (keyDown k) False
- where go upw' downw' active = mkGen $ \ds e -> seq ds $ do
-         (up', upw)    <- stepWire upw'   ds (Right e)
-         (down, downw) <- stepWire downw' ds (Right e)
-         return $ if active
-          then case up' of
-           Left _ -> (Right (), go upw downw active)
-           Right ev -> let (ans, nxt) = event (Right (), True)
-                                              (const (Left mempty, False)) ev
-                       in (ans, go upw downw nxt)
-          else case down of
-            Left _ -> (Left mempty, go upw downw active)
-            Right ev -> let (ans, nxt) = event (Left mempty, False)
-                                               (const (Right (), True)) ev
-                        in (ans, go upw downw nxt)
+command k = between . arr (\(on,off) -> ((), on, off)) . (keyDown k &&& keyUp k)
 
 upAction :: (Monoid e, Monad m) => Wire s e m SDL.Event (Event SDL.Event)
 upAction = keyDown SDL.SDLK_SPACE
@@ -94,14 +80,6 @@ up = command SDL.SDLK_SPACE
 --------------------------------------------------------------------------------
 -- Acceleration-vectors.
 --------------------------------------------------------------------------------
-westVec :: (HasTime t s, MonadReader GameParams m, Monoid e) =>
-           Wire s e m SDL.Event (V2 Double)
-westVec = directionVec (\a -> V2 (-a) 0) (command SDL.SDLK_LEFT)
-
-eastVec :: (HasTime t s, MonadReader GameParams m, Monoid e) =>
-           Wire s e m SDL.Event (V2 Double)
-eastVec = directionVec (\a -> V2 a 0) (command SDL.SDLK_RIGHT)
-
 upVec :: (HasTime t s, MonadReader GameParams m, Monoid e) =>
          Wire s e m SDL.Event (V2 Double)
 upVec = directionVec (\a -> V2 0 (-a)) up
@@ -122,15 +100,15 @@ directionVec toV c = mkGenN $ \_ -> do
 --------------------------------------------------------------------------------
 loadAssets :: SDL.Surface -> IO Assets
 loadAssets screen = do
-  fn     <- TTF.openFont "assets/Ubuntu-R.ttf" 28
+  fn      <- TTF.openFont "assets/Ubuntu-R.ttf" 28
   heli0   <- IMG.load "assets/heli0.png"
   heli1   <- IMG.load "assets/heli1.png"
-  cld  <- IMG.load "assets/cloud.png"
+  cld     <- IMG.load "assets/cloud.png"
   bground <- IMG.load "assets/bg.png"
-  border <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 50 50 50 200
-  wall <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 150 80 30 255
-  red   <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 160 20 20 255
-  return $ Assets fn bground [heli0, heli1] cld border wall red
+  border  <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 50 50 50 200
+  wall    <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 150 80 30 255
+  red     <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 160 20 20 255
+  return  $ Assets fn bground [heli0, heli1] cld border wall red
 --------------------------------------------------------------------------------
 
 
@@ -146,7 +124,7 @@ main = do
   screen <- SDL.setVideoMode (scrW gp') (scrH gp') (bpp gp') [SDL.HWSurface]
   g      <- getStdGen
   assets <- loadAssets screen
-  (SDL.Rect _ _ w h)  <- SDL.getClipRect (head . heli $ assets)
+  (SDL.Rect _ _ w h)   <- SDL.getClipRect (head . heli $ assets)
   (SDL.Rect _ _ bgw _) <- SDL.getClipRect (background assets)
   let gp = defaultGameParams { bgWidth = fromIntegral bgw, playerSize = V2 (fromIntegral w) (fromIntegral h) }
   go gp g screen clockSession_ (runGame 0) assets
@@ -278,11 +256,11 @@ game = mkGenN $ \_ -> CMR.ask >>= \gp -> return (Right (MainMenu 0), run gp)
                                let (px,py) = unPoint p
                                let (V2 pw ph) = playerSize gp
                                    player = mkRect px py pw  ph
-                               l  <- levelW -< ()
+                               l            <- levelW -< ()
                                collide      <- isColliding -< (player, levelRects l)
                                smoke        <- smokeTrail  -< p
                                bgS          <- bg (scrW gp) (scrH gp) (bgWidth gp) -< ()
-                               playerFrame'  <- animation 2 20 -< ()
+                               playerFrame' <- animation 2 20 -< ()
                                first (when (==False)) --> second stopGame -<
                                  (collide || px < camX || (scrW gp + camX) < px || py < 0 || (py+ph) > (scrH gp), camX)
                                returnA -< Running {
@@ -306,67 +284,16 @@ isColliding = arr $ \(r, rs) -> any (overlapping r) rs
 --------------------------------------------------------------------------------
 -- gravity
 --------------------------------------------------------------------------------
-simpleGravityVector :: (HasTime t s, Monoid e
-                 ,MonadRandom m, MonadReader GameParams m) =>
-                 Wire s e m SDL.Event (V2 Double)
-simpleGravityVector = mkGenN $ \_ -> do
-  gp <- CMR.ask
-  return (Right (V2 0 0), (integral (V2 0 (initGravity gp))
-                           . pure (V2 0 (gravityForce gp))
-                           . (until . (pure () &&& upAction)))
-                --> pure (V2 0 0) . up
-                --> simpleGravityVector)
-
--- | Higher complexity than simpleGravityVector, but allows
--- for smooth breaking of fall. (Requires us to keep the
--- previous value from our falling vector as this is
--- unavailable as soon as the wire inhibits.)
 gravityVector :: (HasTime t s, Monoid e
                  ,MonadRandom m, MonadReader GameParams m) =>
                  Wire s e m SDL.Event (V2 Double)
-gravityVector = mkGenN $ \_ ->
-  CMR.ask >>= \gp ->
-    return $
-      (Right (V2 0 0)
-      ,go gp (V2 0 0) (fallWire gp (V2 0 $ initGravity gp))
-                      (holdWire gp (V2 0 0)))
-  where
-        go :: (HasTime t s, Monad m, Monoid e) =>
-              GameParams -> V2 Double ->
-              (Wire s e m SDL.Event (V2 Double)) ->
-              (Wire s e m SDL.Event (V2 Double)) ->
-              Wire s e m SDL.Event (V2 Double)
-        go gp acc fw hw = mkGen $ \ds ev ->
-          seq ds $ do
-           (h, hw') <- stepWire hw ds (Right ev)
-           case h of
-            Right acc' -> return (Right acc', go gp acc' (fallWire gp acc') hw')
-            Left _     -> do (f, fw') <- stepWire fw ds (Right ev)
-                             case f of
-                               Right acc' ->
-                                 return $ lstrict (Right acc'
-                                        ,go gp acc' fw' (holdWire gp acc') )
-                               Left _     ->
-                                 return $ lstrict (Right acc
-                                        ,go gp acc fw' hw' )
-
--- | Accelerate falling.
-fallWire :: (HasTime t s, Monoid e, Monad m) =>
-            GameParams -> V2 Double -> Wire s e m SDL.Event (V2 Double)
-fallWire gp v0 = arr (\(x,y) -> min x y)
-               . (integral v0
-                  . pure (V2 0 (gravityForce gp))
-                    &&& pure (V2 0 (gravityForce gp)))
-               . (until . (pure () &&& upAction))
-
-
--- | Accelerate with (-1.2)g until 0.0 and hold.
-holdWire :: (HasTime t s, Monoid e, Monad m) =>
-            GameParams -> V2 Double -> Wire s e m SDL.Event (V2 Double)
-holdWire gp v0 = arr (\(x,y) -> max x y)
-          . (integral v0 . pure (V2 0 (negate $ 1.2*gravityForce gp))
-                           &&& pure (V2 0 0))
-          . up
+gravityVector = mkGenN $ \_ -> do
+  gp <- CMR.ask
+  return (Right (V2 0 0), (integral (V2 0 (initGravity gp))
+                          . pure (V2 0 (gravityForce gp))
+                          . (until . (pure () &&& upAction)))
+                --> pure (V2 0 0) . up
+                --> gravityVector)
 --------------------------------------------------------------------------------
 
 
@@ -376,15 +303,14 @@ holdWire gp v0 = arr (\(x,y) -> max x y)
 acceleration :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m)
                 => Wire s e m SDL.Event (V2 Double)
 acceleration = proc cmd -> do
-  (base, (up', (east, west))) <-
-    baseAcceleration &&& upVec &&& eastVec &&& westVec -< cmd
-  returnA -< base ^+^ up' ^+^ east ^+^ west
+  (base, up') <- baseAcceleration &&& upVec -< cmd
+  returnA -< base ^+^ up'
 
 baseAcceleration :: (Monoid e, MonadRandom m, CMR.MonadReader GameParams m) =>
                     Wire s e m a (V2 Double)
 baseAcceleration = mkGenN $ \_ ->
-  CMR.ask >>= \gp -> return $ (Right $ V2 (scrollSpeed gp) 0
-                                      , mkConst (Right (V2 (scrollSpeed gp) 0)))
+  CMR.ask >>= \gp ->
+  return $ (Right $ V2 (scrollSpeed gp) 0, mkConst (Right (V2 (scrollSpeed gp) 0)))
 
 position :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m)
             => Wire s e m SDL.Event Point
@@ -409,22 +335,9 @@ wires = go []
               return $ either (const Nothing) (\b -> Just (b,w')) r
             return $ lstrict (Right (map fst ws'), go (map snd ws'))
 
--- | for, but with a random duration.
-for' :: (HasTime t s, Fractional t, Monoid e, MonadRandom m) =>
-        (Double, Double) -> Wire s e m a a
-for' interv  = mkGenN $ \a -> do
-  t <- getRandomR interv
-  return (Right a, go (realToFrac t))
-  where go t' = mkPure $ \ds x ->
-                  let t = t' - dtime ds in
-                  seq t $
-                   if t <= 0
-                    then (Left mempty, mkEmpty)
-                    else (Right x, go t)
-
 smokeTrail :: (HasTime t s, Fractional t, MonadRandom m, Monoid e) =>
               Wire s e m Point [Particle]
-smokeTrail = wires . periodic (0.09) . arr (\x -> for' (0.25,1.5)
+smokeTrail = wires . periodic (0.09) . arr (\x -> for 1
                                                   . pure (SmokePuff x))
 --------------------------------------------------------------------------------
 

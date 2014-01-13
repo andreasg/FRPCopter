@@ -5,76 +5,31 @@ module FRPCopter.Level (levelW, GameState(..), Rect(..), CanContain(..), scroll,
 
 import FRPCopter.Types
 
+import FRP.Netwire
 import Control.Wire
 import Prelude hiding ((.), id, floor, ceiling)
-import Control.Wire.Unsafe.Event
-import Data.Fixed (mod')
 import Control.Monad.Reader (MonadReader, ask)
-import Control.Monad.Random
-import Control.Monad.Identity
-import Linear (V2(..))
-
-
 --------------------------------------------------------------------------------
-events :: (HasTime t s, Fractional t, MonadRandom m, Monoid e) =>
-     (Double, Double) -> Wire s e m a (Event (a, Double))
-events interv = go (0 :: Double) 0
-  where go tt t =
-          mkGen $ \ds a -> do
-            let dt = t - dtime ds
-            (nw :: Double) <- getRandomR interv
-            let nextWait = n nw
-            return $ if dt >  0
-                     then (Right NoEvent, go tt dt)
-                     else (Right (Event (a, nextWait))
-                          ,go nextWait (mod' dt nextWait))
+events :: (HasTime t s, Monad m, Monoid e) => (Double, Double) -> Wire s e m a (Event Double, Event Double)
+events interv = stdNoiseR 1 interv 1234 &&& periodic 1 . (arr realToFrac) . (240*time+1240)
 
 
---------------------------------------------------------------------------------
-levelW :: (Fractional t, Monoid e, HasTime t s
-         ,MonadReader GameParams m, MonadRandom m) =>
-         Wire s e m a Level
-levelW = scroll >>> obsticles &&& ceiling &&& floor >>>
-         arr (\(o, (c,f)) -> Level { obsticleRects = o
+ceiling :: (HasTime t s, Monad m, Monoid e) =>  Wire s e m a [Rect]
+ceiling = obst (\(y,x) -> mkRect x 0 240 y)  (0, 200)
+
+floor :: (HasTime t s, Monad m, Monoid e) =>  Wire s e m a [Rect]
+floor = obst (\(y,x) -> mkRect x y 240 200)  (400, 600)
+
+obst :: (HasTime t s, Monad m, Monoid e) => ((Double,Double) -> Rect) -> (Double, Double) -> Wire s e m a [Rect]
+obst f interv =  arr (map f . uncurry zip ) . (second (hold . accumE (flip (:)) []) . first (hold . accumE (flip (:)) []) . events interv)
+
+levelW :: (Monoid e, HasTime t s, Monad m) => Wire s e m a Level
+levelW  =
+  ceiling &&& floor >>>
+           arr (\(c,f) -> Level { obsticleRects = []
                                    , ceilingRects  = c
                                    , floorRects    = f})
-
-
 --------------------------------------------------------------------------------
-floor :: (MonadRandom m, HasTime t s, Fractional t
-         ,Monoid e, MonadReader GameParams m) =>
-         Wire s e m Double [Rect]
-floor = mkGenN $ \_ -> do
-  sl <- liftM segmentLength ask
-  w  <- liftM scrW ask
-  return (Right [], construct w . onEventM floorTile . events sl)
-  where floorTile (x, dt) = do
-          gp <- ask
-          (y :: Double) <- getRandomR (floorRange gp)
-          return $ Rect (mkPoint (n x -1)                    (n y))
-                        (V2 (n $ dt* scrollSpeed gp) (n $ scrH gp - y))
-
-ceiling :: (MonadRandom m, HasTime t s, Fractional t, Monoid e
-           ,MonadReader GameParams m)
-           => Wire s e m Double [Rect]
-ceiling = mkGenN $ \_ -> do
-  sl <- liftM segmentLength ask
-  w  <- liftM scrW ask
-  return (Right [], construct w  . onEventM ceilingTile . events sl)
-  where ceilingTile (x, dt) = do
-          gp <- ask
-          (y :: Double) <- getRandomR (ceilingRange gp)
-          return $ Rect (mkPoint (x-1) 0) (V2 (n $ dt * scrollSpeed gp) (n y))
-
-obsticles :: (MonadRandom m, HasTime t s, Fractional t
-             ,Monoid e, MonadReader GameParams m) =>
-             Wire s e m Double [Rect]
-obsticles = mkGenN $ \_ -> do
-  gp <- ask
-  return (Right [], construct (scrW gp)
-                    . onEventM (toRect (0,0) (obsticleRange gp)
-                                (obsticleHeights gp) (10,100))
-                    . events (0.75, 1.75))
 
 
 --------------------------------------------------------------------------------
@@ -84,29 +39,4 @@ scroll =
   mkGenN $ \_ -> do
     gp <- ask
     return (Right (scrW gp), arr realToFrac . (time*pure (scrollSpeed gp))+scrW gp)
-
-
 --------------------------------------------------------------------------------
-toRect :: (Monad m, MonadRandom m) =>
-          (Double, Double) -> (Double, Double) -> (Double, Double) ->
-          (Double, Double) -> (Double, Double) -> m Rect
-toRect xcord ycord width height (dx, _)= do
-    x <- getRandomR xcord
-    y <- getRandomR ycord
-    w <- getRandomR width
-    h <- getRandomR height
-    return $ mkRect (n (x+dx)) (n y) (n w) (n h)
-
-
---------------------------------------------------------------------------------
-construct :: (Monad m, Monoid e) =>
-             Double -> Wire s e m (Event Rect) [Rect]
-construct lim  = hold . accumE append []
- where outOfRangeThreshhold = 200
-       append xs x@(Rect ((Point (V2 x0 _))) _ ) =
-        x : filter (\(Rect (Point (V2 x1 _))_) ->x1>=x0-lim-outOfRangeThreshhold) xs
-
-
---------------------------------------------------------------------------------
-n :: (Fractional b, RealFrac a) => a -> b
-n x = (fromInteger . round $ x*10) / 10.0
