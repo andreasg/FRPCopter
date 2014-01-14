@@ -1,69 +1,79 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Main where
 
-import FRPCopter.Types
-import FRPCopter.Level
-
 import Linear
-import Data.Maybe (catMaybes)
 import qualified Control.Monad as CM
 import qualified Graphics.UI.SDL as SDL
 import qualified Graphics.UI.SDL.Image as IMG
-import qualified Graphics.UI.SDL.TTF as TTF
-import Control.Monad.Reader (MonadReader)
-import qualified Control.Monad.Reader as CMR
 import Control.Wire
-import Control.Wire.Unsafe.Event
-import Prelude hiding (id, (.), until)
+import Prelude hiding (id, (.), until, ceiling, floor)
 import FRP.Netwire
-import Control.Monad.Random
-import Data.Fixed (mod')
 
 
 --------------------------------------------------------------------------------
-defaultGameParams :: GameParams
-defaultGameParams = GameParams {
-    scrollSpeed = 240
-  , segmentLength = (0.05,0.7)
-  , ceilingRange = (0, screenH / 4)
-  , floorRange = (screenH - (screenH / 4),  screenH)
-  , outOfRangeLimit = 100
-  , obsticleRange = (screenH / 3, screenH - (screenH / 3))
-  , obsticleHeights = (10, 60)
-  , scrH = screenH
-  , scrW = screenW
-  , bpp = 32
-  , accel = 240
-  , initGravity = 0
-  , gravityForce = 500
-  , bgWidth = undefined
-  , playerSize = undefined
-  }
-  where
-    screenW :: Num a => a
-    screenW = 1024
-    screenH :: Num a => a
-    screenH = 600
+-- data
+--------------------------------------------------------------------------------
+type Wire' a b = (HasTime t s,  Monad m, Fractional t, Monoid s) => Wire s () m a b
+
+type Game = (V2 Double, Double, ([Rect], [Rect]))
+
+data Assets = Assets { heli :: SDL.Surface, wallColor :: SDL.Pixel }
+
+data Rect = Rect (V2 Double) (V2 Double)
+
+mkRect :: Double -> Double -> Double -> Double -> Rect
+mkRect x y w h = Rect (V2 x y) (V2 w h)
+
+unRect :: Rect -> ((Double, Double), (Double, Double))
+unRect (Rect (V2 x y) (V2 w h)) = ((x,y), (w, h))
+
+contains :: V2 Double -> Rect -> Bool
+contains (V2 x y) (Rect (V2 x' y') (V2 w h)) =
+    x'    <= x && x <= (x'+w)
+    && y' <= y && y <= (y'+h)
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- params
+--------------------------------------------------------------------------------
+screenW, screenH, scrollSpeed :: Num a => a
+screenW = 800
+screenH = 600
+scrollSpeed = 240
 --------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
--- Wires for user input and keybindings.
+--  level generation
 --------------------------------------------------------------------------------
--- | Generate event when the key is pressed.
+events :: (Double, Double) -> Wire' a (Event Double, Event Double)
+events interv = stdNoiseR 1 interv 1234 &&& periodic 1 . (arr realToFrac) . (scrollSpeed*time+screenW)
+
+ceiling :: Wire' a [Rect]
+ceiling = obst (\(y,x) -> mkRect x 0 scrollSpeed y)  (0, 200)
+
+floor :: Wire' a [Rect]
+floor = obst (\(y,x) -> mkRect x y scrollSpeed 200)  (400, 600)
+
+obst :: ((Double,Double) -> Rect) -> (Double, Double) -> Wire' a [Rect]
+obst f interv =  arr (map f . uncurry zip ) . (second (hold . accumE (flip (:)) []) . first (hold . accumE (flip (:)) []) . events interv)
+
+levelW :: Wire' a ([Rect], [Rect])
+levelW  = ceiling &&& floor 
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+-- input events
+--------------------------------------------------------------------------------
 keyDown :: SDL.SDLKey -> Wire s e m SDL.Event (Event SDL.Event)
 keyDown k = became $ \e -> case e of
   SDL.KeyDown (SDL.Keysym key _ _) -> k == key; _ -> False
 
-
--- | Produce event when the key is released.
 keyUp :: SDL.SDLKey -> Wire s e m SDL.Event (Event SDL.Event)
 keyUp k = became $ \e -> case e of
   SDL.KeyUp (SDL.Keysym key _ _) -> k == key; _ -> False
 
-
--- | Produces only while given key is pressed. Messy because the
---   `Control.Wire.Interval.between` was causing memory-leaks.
 command :: (HasTime t s, Monoid e, Monad m) => SDL.SDLKey -> Wire s e m SDL.Event ()
 command k = between . arr (\(on,off) -> ((), on, off)) . (keyDown k &&& keyUp k)
 
@@ -73,294 +83,100 @@ upAction = keyDown SDL.SDLK_SPACE
 quit :: (Monoid e, Monad m) => Wire s e m SDL.Event SDL.Event
 quit = hold . keyDown  SDL.SDLK_ESCAPE
 
-up :: (HasTime t s, Monoid e, Monad m) => Wire s e m SDL.Event ()
+up :: Wire' SDL.Event ()
 up = command SDL.SDLK_SPACE
-
-
---------------------------------------------------------------------------------
--- Acceleration-vectors.
---------------------------------------------------------------------------------
-upVec :: (HasTime t s, MonadReader GameParams m, Monoid e) =>
-         Wire s e m SDL.Event (V2 Double)
-upVec = directionVec (\a -> V2 0 (-a)) up
-
-directionVec :: (HasTime t s, MonadReader GameParams m, Monoid e) =>
-     (Double -> V2 Double)  ->
-     Wire s e m SDL.Event b ->
-     Wire s e m SDL.Event (V2 Double)
-directionVec toV c = mkGenN $ \_ -> do
-  gp <- CMR.ask
-  return $  (Right neutral, pure (toV (accel gp)) . c <|> pure neutral)
-  where neutral = V2 0 0
---------------------------------------------------------------------------------
-
-
---------------------------------------------------------------------------------
--- loading of assets
---------------------------------------------------------------------------------
-loadAssets :: SDL.Surface -> IO Assets
-loadAssets screen = do
-  fn      <- TTF.openFont "assets/Ubuntu-R.ttf" 28
-  heli0   <- IMG.load "assets/heli0.png"
-  heli1   <- IMG.load "assets/heli1.png"
-  cld     <- IMG.load "assets/cloud.png"
-  bground <- IMG.load "assets/bg.png"
-  border  <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 50 50 50 200
-  wall    <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 150 80 30 255
-  red     <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 160 20 20 255
-  return  $ Assets fn bground [heli0, heli1] cld border wall red
---------------------------------------------------------------------------------
-
-
---------------------------------------------------------------------------------
--- main
--------------------------------------------------------------------------------
-main :: IO ()
-main = do
-  SDL.init [SDL.InitEverything]
-  TTF.init
-  SDL.setCaption "FRPCopter" ""
-  let gp' = defaultGameParams
-  screen <- SDL.setVideoMode (scrW gp') (scrH gp') (bpp gp') [SDL.HWSurface]
-  g      <- getStdGen
-  assets <- loadAssets screen
-  (SDL.Rect _ _ w h)   <- SDL.getClipRect (head . heli $ assets)
-  (SDL.Rect _ _ bgw _) <- SDL.getClipRect (background assets)
-  let gp = defaultGameParams { bgWidth = fromIntegral bgw, playerSize = V2 (fromIntegral w) (fromIntegral h) }
-  go gp g screen clockSession_ (runGame 0) assets
-  SDL.quit
-  where
-  go gp g screen s w assets = do
-    evt <- SDL.pollEvent
-    (ds, s') <- stepSession s
-    let ((game', w'), g') = runIdentity
-                             . flip runRandT g
-                             . flip CMR.runReaderT gp
-                             . runGameState
-                             $ stepWire w ds (Right evt)
-    case game' of
-      Left  _ -> go gp g' screen s' w' assets
-      Right Ending -> putStrLn "quitting"
-      Right stuff -> do
-        clear screen
-        render screen assets stuff
-        SDL.flip screen
-        go gp g' screen s' w' assets
-  clear s = CM.void $ SDL.mapRGB (SDL.surfaceGetPixelFormat s) 40 40 40
-            >>= SDL.fillRect s Nothing
-
---------------------------------------------------------------------------------
--- rendering
---------------------------------------------------------------------------------
-drawText :: SDL.Surface -> TTF.Font -> String -> (Int, Int) -> SDL.Color -> IO Bool
-drawText screen fn txt (x,y) c = do
-  srf <- TTF.renderTextBlended fn txt c
-  (SDL.Rect _ _ w h) <- SDL.getClipRect srf
-  SDL.blitSurface srf Nothing screen (Just $ SDL.Rect x y w h)
-
-render :: SDL.Surface -> Assets -> Game -> IO ()
-render _ _ Ending = return ()
-render screen assets (MainMenu score) = do
-  sc <- SDL.getClipRect screen
-  SDL.blitSurface (background assets) (Just sc) screen (Just sc)
-  let white = SDL.Color 255 255 255
-      grey = SDL.Color 140 140 140
-      fnt = font assets
-  drawText screen fnt "welcome to FRPCopter!" (380, 100) white
-  drawText screen fnt "press Space to play" (390, 200) grey
-  drawText screen fnt "(or Escape to quit)" (394, 230)  grey
-  CM.when (score > 0) . CM.void $ drawText screen fnt
-    ("Score: " ++ show (round score :: Int)) (415, 330) (SDL.Color 50 255 50)
-render screen assets g = do
-        let dx = cameraPos g
-        renderBackground
-        renderLevel dx
-        renderParticles dx
-        renderPlayer dx
-        renderScore dx
-  where
-    rectToSDLRect dx p =
-      let ((x,y), (w, h)) = unRect p
-      in SDL.Rect (round (x - dx)) (round y) (round w) (round h)
-
-    blitRects dx rs fill border = do
-      CM.forM_ (map (rectToSDLRect dx) rs) $ \r -> do
-        flip (SDL.fillRect screen) border (Just (grow 1 r))
-        flip (SDL.fillRect screen) fill (Just r)
-
-    renderParticles dx = do
-      (SDL.Rect _ _ cw ch) <- SDL.getClipRect (cloud assets)
-      CM.forM_ (particles g) $ \(SmokePuff sp) ->
-        let (cx, cy) = unPoint sp
-        in SDL.blitSurface (cloud assets) Nothing screen
-             (Just $ SDL.Rect (round (cx-dx)-cw) (round cy) cw ch)
-
-    renderPlayer dx = do
-      let (px, py) = unPoint . playerPos $ g
-      r@(SDL.Rect _ _ w h) <- SDL.getClipRect ((heli assets) !! playerFrame g)
-      CM.void $
-        SDL.blitSurface  ((heli assets) !! playerFrame g) (Just r) screen
-          (Just $ SDL.Rect (round (px-dx) ) (round py ) w h)
-
-    renderLevel dx = do
-      blitRects dx (ceilingRects  . level $ g) (redColor assets)  (borderColor assets)
-      blitRects dx (floorRects    . level $ g) (redColor assets)  (borderColor assets)
-      blitRects dx (obsticleRects . level $ g) (wallColor assets) (borderColor assets)
-
-    renderScore dx = do
-      (SDL.Rect _ _ scw _) <- SDL.getClipRect screen
-      CM.void $
-        drawText screen (font assets) ("Distance: " ++ show (round dx :: Int))
-                 (scw - 15 - 200, 15) (SDL.Color 255 255 255)
-
-    renderBackground = do
-      let bgS = bgSlice g
-      sc <- SDL.getClipRect screen
-      case bgS of
-        (r0, Nothing) -> CM.void $ SDL.blitSurface (background assets)
-                         (Just (rectToSDLRect 0 r0)) screen (Just sc)
-        (r0, Just r1) -> do
-          let (Rect _ (V2 w0 h0)) = r0
-              (Rect _ (V2 w1 h1)) = r1
-          CM.void $ SDL.blitSurface (background assets) (Just (rectToSDLRect 0 r0))
-            screen (Just $ SDL.Rect 0 0 (round w0) (round h0))
-          CM.void $ SDL.blitSurface (background assets) (Just (rectToSDLRect 0 r1))
-            screen (Just $ SDL.Rect (round w0) 0 (round w1) (round h1))
-
-
-grow :: Int -> SDL.Rect -> SDL.Rect
-grow d (SDL.Rect x y w h) = SDL.Rect (x-d) (y-d) (w+d*2) (h+d*2)
---------------------------------------------------------------------------------
-
-
---------------------------------------------------------------------------------
--- game
---------------------------------------------------------------------------------
-runGame :: (HasTime t s, MonadRandom m,  MonadReader GameParams m, Fractional t) =>
-           Integer -> Wire s GameOver m SDL.Event Game
-runGame score = pure Ending . quit <|>  go (startGame score)
-  where startGame s = (until . (pure (MainMenu (fromInteger s)) &&& upAction)) --> game
-        go w = mkGen $ \ds ev -> seq ds $ do
-          (o, w') <- stepWire w ds (Right ev)
-          case o of
-            Left (GameOver s) -> return $  (Left (GameOver s), go (startGame s))
-            Right g -> return $  (Right g, go w')
-
-
-game :: (HasTime t s, Fractional t, MonadReader GameParams m, MonadRandom m)
-     =>  Wire s GameOver m SDL.Event Game
-game = mkGenN $ \_ -> CMR.ask >>= \gp -> return (Right (MainMenu 0), run gp)
-        where
-        run gp  = proc e -> do camX <- (scroll - (scrW gp)) -< ()
-                               p  <- position -< e
-                               let (px,py) = unPoint p
-                               let (V2 pw ph) = playerSize gp
-                                   player = mkRect px py pw  ph
-                               l            <- levelW -< ()
-                               collide      <- isColliding -< (player, levelRects l)
-                               smoke        <- smokeTrail  -< p
-                               bgS          <- bg (scrW gp) (scrH gp) (bgWidth gp) -< ()
-                               playerFrame' <- animation 2 20 -< ()
-                               first (when (==False)) --> second stopGame -<
-                                 (collide || px < camX || (scrW gp + camX) < px || py < 0 || (py+ph) > (scrH gp), camX)
-                               returnA -< Running {
-                                  cameraPos = camX
-                                 ,level = l
-                                 ,particles = smoke
-                                 ,playerPos = p
-                                 ,bgSlice = bgS
-                                 ,playerFrame = playerFrame' }
-        stopGame = mkPureN $ \points -> (Left (GameOver (round points))
-                                        , mkConst (Left (GameOver $ round points)))
--------------------------------------------------------------------------------
-
-
---------------------------------------------------------------------------------
-isColliding :: Arrow a => a (Rect, [Rect]) Bool
-isColliding = arr $ \(r, rs) -> any (overlapping r) rs
---------------------------------------------------------------------------------
-
-
---------------------------------------------------------------------------------
--- gravity
---------------------------------------------------------------------------------
-gravityVector :: (HasTime t s, Monoid e
-                 ,MonadRandom m, MonadReader GameParams m) =>
-                 Wire s e m SDL.Event (V2 Double)
-gravityVector = mkGenN $ \_ -> do
-  gp <- CMR.ask
-  return (Right (V2 0 0), (integral (V2 0 (initGravity gp))
-                          . pure (V2 0 (gravityForce gp))
-                          . (until . (pure () &&& upAction)))
-                --> pure (V2 0 0) . up
-                --> gravityVector)
 --------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
 -- positioning
 --------------------------------------------------------------------------------
-acceleration :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m)
-                => Wire s e m SDL.Event (V2 Double)
-acceleration = proc cmd -> do
-  (base, up') <- baseAcceleration &&& upVec -< cmd
-  returnA -< base ^+^ up'
+upVec :: Wire' SDL.Event (V2 Double)
+upVec = pure (V2 0 (-300)) . up <|> pure (V2 0 0)
 
-baseAcceleration :: (Monoid e, MonadRandom m, CMR.MonadReader GameParams m) =>
-                    Wire s e m a (V2 Double)
-baseAcceleration = mkGenN $ \_ ->
-  CMR.ask >>= \gp ->
-  return $ (Right $ V2 (scrollSpeed gp) 0, mkConst (Right (V2 (scrollSpeed gp) 0)))
+gravityVector :: Wire'  SDL.Event (V2 Double)
+gravityVector = mkPureN $ \_ -> do
+  (Right (V2 0 0), (integral (V2 0 100) . pure (V2 0 100) . (until . (pure () &&& upAction)))
+                   --> pure (V2 0 0) . up --> gravityVector)
 
-position :: (HasTime t s, Monoid e, MonadRandom m, MonadReader GameParams m)
-            => Wire s e m SDL.Event Point
-position = arr Point . integral (V2 300 300) . (arr (uncurry (^+^)))
-           . (gravityVector  &&& acceleration)
---------------------------------------------------------------------------------
+velocity ::  Wire' SDL.Event (V2 Double)
+velocity = proc cmd -> do
+  up' <- upVec -< cmd
+  returnA -< (V2 scrollSpeed 0) ^+^ up'
 
-
---------------------------------------------------------------------------------
--- particles
---------------------------------------------------------------------------------
--- | Manages a set of wires. When a wire inhibits, it's removed from
--- the set. On Event, the wire is added to the set.
-wires :: (Monad m, Monoid e, HasTime t s, Monoid s) =>
-         Wire s e m (Event (Wire s e m () a)) [a]
-wires = go []
-  where go ws =
-          mkGen $ \ds ev -> do
-            let nw = event ws (flip (:) ws) ev
-            ws' <- CM.liftM catMaybes . CM.forM nw $ \w -> do
-              (r, w') <- stepWire w ds $ Right ()
-              return $ either (const Nothing) (\b -> Just (b,w')) r
-            return $ lstrict (Right (map fst ws'), go (map snd ws'))
-
-smokeTrail :: (HasTime t s, Fractional t, MonadRandom m, Monoid e) =>
-              Wire s e m Point [Particle]
-smokeTrail = wires . periodic (0.09) . arr (\x -> for 1
-                                                  . pure (SmokePuff x))
+position :: Wire' SDL.Event (V2 Double)
+position = integral (V2 200 200) . (arr (uncurry (^+^))) . (gravityVector  &&& velocity)
 --------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
--- parallax scrolling background
+-- game
 --------------------------------------------------------------------------------
-bg :: (HasTime t s, Fractional t, Monoid e, Monad m) =>
-      Double -> Double -> Double -> Wire s e m a (Rect, Maybe Rect)
-bg w h bgW =
-  (proc x' -> do
-    let x = (realToFrac x') `mod'` bgW
-    if (x+w) < bgW
-       then returnA -< (mkRect x 0 w h, Nothing)
-       else returnA -< (mkRect x 0 (bgW - x) h
-                       ,Just $ mkRect 0 0 (w - (bgW - x)) h)) . (32*time)
+scroll :: Fractional t => Wire' a t
+scroll = arr realToFrac . (time*scrollSpeed)
+
+isColliding :: Arrow a => a (V2 Double, [Rect]) Bool
+isColliding = arr $ \(r, rs) -> any (contains r) rs
+
+game :: Wire' SDL.Event Game
+game = proc e -> do
+  playerPos <- position -< e
+  camera    <- scroll -< e
+  (c,f)     <- levelW -< ()
+  collide   <- isColliding -< (playerPos, (c++f))
+  first (when (==False)) --> second stopGame -< (collide, camera)
+  returnA -< (playerPos,  camera, (c,f))
+  where stopGame = mkPureN $ \_ -> (Left (), mkConst (Left ()))
 --------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
--- animation-ticker
+-- IO
 --------------------------------------------------------------------------------
-animation :: (HasTime t s, Monad m, Monoid e, Fractional t) =>
-             Int -> Double -> Wire s e m a Int
-animation n fps = hold . periodicList (1 / realToFrac fps) (cycle [0..n-1])
---------------------------------------------------------------------------------
+loadAssets :: SDL.Surface -> IO Assets
+loadAssets screen = do
+  h <- IMG.load "assets/heli.png"
+  wall <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 80 40 30 255
+  return $ Assets h wall
+
+main :: IO ()
+main = do
+  SDL.init [SDL.InitEverything]
+  SDL.setCaption "FRPCopter" ""
+  screen <- SDL.setVideoMode screenW screenH 32 [SDL.HWSurface]
+  as <- loadAssets screen
+  go as screen clockSession_ game
+  SDL.quit
+  where go as scr s w = do
+          e <- SDL.pollEvent          
+          (ds, s') <- stepSession s
+          (res, w') <- stepWire w ds (Right e)
+          case res of
+            Left _ -> putStrLn "qutting"
+            Right gm -> do render scr as gm
+                           SDL.flip scr
+                           go as scr s' w'
+
+render :: SDL.Surface -> Assets -> Game -> IO ()
+render screen assets (playerPos, dx, (c,f)) = do
+  CM.void $ SDL.mapRGB (SDL.surfaceGetPixelFormat screen) 180 87 40 >>= SDL.fillRect screen Nothing
+  renderLevel
+  renderPlayer
+
+  where
+    rectToSDLRect p =
+      let ((x,y), (w, h)) = unRect p
+      in SDL.Rect (round (x - dx)) (round y) (round w) (round h)
+    blitRects rs fill = do
+      CM.forM_ (map rectToSDLRect rs) $ \r -> do
+        flip (SDL.fillRect screen) fill (Just r)
+    renderPlayer = do
+      let (V2 px py) = playerPos
+      r@(SDL.Rect _ _ w h) <- SDL.getClipRect (heli assets)
+      CM.void $
+        SDL.blitSurface  ((heli assets)) (Just r) screen
+          (Just $ SDL.Rect (round (px-dx) ) (round py ) w h)
+    renderLevel = do
+      blitRects c (wallColor assets)
+      blitRects f (wallColor assets)                           
+--------------------------------------------------------------------------------  
