@@ -18,6 +18,7 @@ executable copter
         GeneralizedNewtypeDeriving
   hs-source-dirs:      src/
   main-is:             Main.hs
+  other-modules: Extra
   ghc-options: -rtsopts -threaded -O2
   build-depends:       
     base == 4.6.*, 

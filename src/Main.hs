@@ -9,6 +9,8 @@ import Control.Wire
 import Prelude hiding (id, (.), until, ceiling, floor)
 import FRP.Netwire
 
+import Extra
+
 --------------------------------------------------------------------------------
 -- params
 --------------------------------------------------------------------------------
@@ -26,7 +28,7 @@ type Wire' a b = (HasTime t s,  Monad m, Fractional t, Monoid s) => Wire s () m 
 
 type Game = (V2 Double, Double, ([Rect], [Rect]))
 
-data Assets = Assets { heli :: SDL.Surface, wallColor :: SDL.Pixel }
+data Assets = Assets { heli :: SDL.Surface, wallColor :: SDL.Pixel, smoke :: SDL.Surface }
 
 data Rect = Rect (V2 Double) (V2 Double)
 
@@ -125,8 +127,9 @@ game = proc e -> do
 loadAssets :: SDL.Surface -> IO Assets
 loadAssets screen = do
   h <- IMG.load "assets/heli.png"
+  c <- IMG.load "assets/cloud.png"  
   wall <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 80 40 30 255
-  return $ Assets h wall
+  return $ Assets h wall c
 
 main :: IO ()
 main = do
@@ -151,7 +154,12 @@ render screen assets (playerPos, dx, (c,f)) = do
     clearScreen
     renderLevel
     renderPlayer
+--    renderParticles
   where
+--    renderParticles =
+--      CM.forM_ ps $ \ (SmokePuff (V2 x y)) -> do
+--        (SDL.Rect _ _ w h) <- SDL.getClipRect (smoke assets)
+--        SDL.blitSurface (smoke assets) Nothing screen (Just $ SDL.Rect (round (x - dx) - w) (round y) w h)
     clearScreen = 
       SDL.mapRGB (SDL.surfaceGetPixelFormat screen) 180 87 40 >>=
       SDL.fillRect screen Nothing
@@ -171,3 +179,15 @@ render screen assets (playerPos, dx, (c,f)) = do
       blitRects c (wallColor assets)
       blitRects f (wallColor assets)
 --------------------------------------------------------------------------------
+
+
+
+--------------------------------------------------------------------------------
+-- Extra
+--------------------------------------------------------------------------------
+smokeTrail :: Wire' (V2 Double) [Particle]
+smokeTrail = manageWires . periodic (0.09) . arr (\x -> for 0.3 . pure (SmokePuff x))
+
+
+animation :: Int -> Double -> Wire' a Int
+animation n fps = hold . periodicList (1 / realToFrac fps) (cycle [0..n-1])
