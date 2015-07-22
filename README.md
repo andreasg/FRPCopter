@@ -5,7 +5,7 @@ Tutorial Branch
 To test this out, ensure you have SDL (not the "new" SDL2) installed, then:
 
 ``` bash
-cabal init sandbox
+cabal sandbox init
 cabal install --only-dependencies
 cabal build
 cabal run
