@@ -17,6 +17,3 @@ manageWires = go []
               (r, w') <- stepWire w ds $ Right ()
               return $ either (const Nothing) (\b -> Just (b,w')) r
             return $ lstrict (Right (map fst ws'), go (map snd ws'))
-
-
-data Particle = SmokePuff (V2 Double)

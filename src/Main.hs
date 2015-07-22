@@ -1,4 +1,6 @@
+{-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
+
 module Main where
 
 import Linear
@@ -9,10 +11,11 @@ import Control.Wire
 import Prelude hiding (id, (.), until, ceiling, floor)
 import FRP.Netwire
 
-import Extra
+import Extra (manageWires)
 
---------------------------------------------------------------------------------
--- params
+
+---------------------------------------------------------------------------------
+-- Parameters
 --------------------------------------------------------------------------------
 screenW, screenH, scrollSpeed :: Num a => a
 screenW = 800
@@ -22,102 +25,133 @@ scrollSpeed = 240
 
 
 --------------------------------------------------------------------------------
--- data
+-- Data Types
+data Assets = Assets {heli :: SDL.Surface 
+                     ,wallColor :: SDL.Pixel
+                     ,smoke :: SDL.Surface}
+
+data Particle = SmokePuff (V2 Double)
+
+-- Tuple of Game is basically a snapshot in time of our scene.
+-- The render function below knows how to take such a tuple and 
+-- put it on the screen.
+type Game =
+     (V2 Double,       -- player position 
+      Double,          -- camera x-coordinate (scroll)
+      ([Rect], [Rect]),-- level (ceiling, floor)
+      [Particle]
+      )
+      
+
+-- Simplified type sig for Netwire Wire
+type Wire' a b = forall s. forall m. forall t. 
+              (HasTime t s, Monad m, Fractional t, Monoid s) 
+              => Wire s () m a b
+--------------------------------------------------------------------------------              
+
+
 --------------------------------------------------------------------------------
-type Wire' a b = (HasTime t s,  Monad m, Fractional t, Monoid s) => Wire s () m a b
-
-type Game = (V2 Double, Double, ([Rect], [Rect]))
-
-data Assets = Assets { heli :: SDL.Surface, wallColor :: SDL.Pixel, smoke :: SDL.Surface }
-
+-- Rectangles
+--------------------------------------------------------------------------------
 data Rect = Rect (V2 Double) (V2 Double)
 
 mkRect :: Double -> Double -> Double -> Double -> Rect
 mkRect x y w h = Rect (V2 x y) (V2 w h)
 
 unRect :: Rect -> ((Double, Double), (Double, Double))
-unRect (Rect (V2 x y) (V2 w h)) = ((x,y), (w, h))
+unRect (Rect (V2 x y) (V2 w h)) = ((x,y),(w,h))
+
 
 contains :: V2 Double -> Rect -> Bool
-contains (V2 x y) (Rect (V2 x' y') (V2 w h)) =
-    x'    <= x && x <= (x'+w)
-    && y' <= y && y <= (y'+h)
+contains (V2 px py) r = 
+         let ((x,y),(w,h)) = unRect r
+         in x <= px && px <= (x+w)
+         && y <= py && py <= (y+h)
 --------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
---  level generation
+-- Camera movement
 --------------------------------------------------------------------------------
-events :: (Double, Double) -> Wire' a (Event Double, Event Double)
-events interv = stdNoiseR 1 interv 1234 &&& periodic 1 . (scroll+screenW)
+scroll :: Fractional t => Wire' a t
+scroll = arr realToFrac . time * scrollSpeed
+--------------------------------------------------------------------------------
 
-ceiling :: Wire' a [Rect]
-ceiling = obst (\(y,x) -> mkRect x 0 scrollSpeed y)  (0, 200)
 
-floor :: Wire' a [Rect]
-floor = obst (\(y,x) -> mkRect x y scrollSpeed 200)  (400, 600)
-
-obst :: ((Double,Double) -> Rect) -> (Double, Double) -> Wire' a [Rect]
-obst toRect interv =  arr (map toRect . uncurry zip )
-                      . (second (hold . accumList) . first (hold . accumList))
-                      . events interv
-
+--------------------------------------------------------------------------------
+-- Level generation
+--------------------------------------------------------------------------------
 accumList :: Wire' (Event a) (Event [a])
 accumList = accumE (flip (:)) []
 
+rects :: (Double, Double) -> (Double -> Double -> Rect) -> Wire' a [Rect]
+rects interval toRect = hold . accumList . rect toRect . stdNoiseR 1 interval rndSeed
+  where rndSeed = 1234
+
+rect :: (Double -> Double -> Rect) -> Wire' (Event Double) (Event Rect)
+rect toRect = proc ed -> do
+     f <- arr toRect . (scroll+screenW) -< ()
+     returnA -< fmap f ed
+
 level :: Wire' a ([Rect], [Rect])
-level  = ceiling &&& floor
+level = ceiling &&& floor
+  where ceiling = rects (0, 200) (\x h -> mkRect x 0 scrollSpeed h)
+        floor   = rects (400, 600) (\x y -> mkRect x y scrollSpeed 200)
 --------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
--- input events
+-- Keyboard input
 --------------------------------------------------------------------------------
 keyDown :: SDL.SDLKey -> Wire s e m SDL.Event (Event SDL.Event)
 keyDown k = became $ \e -> case e of
-  SDL.KeyDown (SDL.Keysym key _ _) -> k == key; _ -> False
-
+   SDL.KeyDown (SDL.Keysym keysym _ _) -> keysym == k; _ -> False
+   
 keyUp :: SDL.SDLKey -> Wire s e m SDL.Event (Event SDL.Event)
 keyUp k = became $ \e -> case e of
-  SDL.KeyUp (SDL.Keysym key _ _) -> k == key; _ -> False
-
-command :: (HasTime t s, Monoid e, Monad m) => SDL.SDLKey -> Wire s e m SDL.Event ()
-command k = between . arr (\(on,off) -> ((), on, off)) . (keyDown k &&& keyUp k)
-
-up :: Wire' SDL.Event ()
-up = command SDL.SDLK_SPACE
+   SDL.KeyUp (SDL.Keysym keysym _ _) -> keysym == k; _ -> False
 --------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
--- positioning
+-- Velocity and player positioning
 --------------------------------------------------------------------------------
-velocity :: Wire'  SDL.Event (V2 Double)
-velocity = integral (V2 scrollSpeed 100) . pure (V2 0 800) . until . pressSpace
-           --> pure (V2 scrollSpeed (-100)) . up --> velocity
-  where pressSpace = pure () &&& keyDown SDL.SDLK_SPACE
+velocity :: Wire' SDL.Event (V2 Double)
+velocity = fall . until . pressSpace
+           --> goUp . until . releaseSpace
+           --> velocity
+ where 
+ fall = integral (V2 scrollSpeed 100) . pure (V2 0 800)
+ pressSpace = pure () &&& keyDown SDL.SDLK_SPACE
+ goUp = pure (V2 scrollSpeed (-200))
+ releaseSpace = pure () &&& keyUp SDL.SDLK_SPACE
+
 
 position :: Wire' SDL.Event (V2 Double)
-position = integral (V2 200 200) . velocity
+position = integral (V2 300 300) . velocity 
+  
+
+isColliding :: Wire' (V2 Double, ([Rect],[Rect])) Bool
+isColliding = arr (\(p, (c, f)) -> any (contains p) (c++f))
+
+
+smokeTrail :: Wire' (V2 Double) [Particle]
+smokeTrail = manageWires . periodic 0.09 . arr (\p -> for 0.5 . pure (SmokePuff p))
 --------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
--- game
+-- Game Wire, when this inhibits, game is over
 --------------------------------------------------------------------------------
-scroll :: Fractional t => Wire' a t
-scroll = arr realToFrac . time*scrollSpeed
-
-isColliding :: Wire' (V2 Double, [Rect]) Bool
-isColliding = arr $ \(r, rs) -> any (contains r) rs
-
 game :: Wire' SDL.Event Game
 game = proc e -> do
-  (camera, playerPos) <- scroll &&& position -< e
-  (c,f)               <- level  -< ()
-  collide             <- isColliding -< (playerPos, (c++f))
-  when (==False) --> inhibit () -< collide
-  returnA -< (playerPos,  camera, (c,f))
+     playerPos <- position -< e
+     cameraPos <- scroll -< ()
+     world <- level -< ()
+     collide <- isColliding -< (playerPos, world)
+     when(==False) -< collide
+     ps <- smokeTrail -< playerPos
+     returnA -< (playerPos, cameraPos, world, ps)
 --------------------------------------------------------------------------------
 
 
@@ -131,6 +165,7 @@ loadAssets screen = do
   wall <- SDL.mapRGBA (SDL.surfaceGetPixelFormat screen) 80 40 30 255
   return $ Assets h wall c
 
+
 main :: IO ()
 main = do
   SDL.init [SDL.InitEverything]
@@ -139,10 +174,29 @@ main = do
   as <- loadAssets screen
   go as screen clockSession_ game
   SDL.quit
+  
+  -- go is our "main loop"
   where go as scr s w = do
+     
+          -- get system events (if any)
           e <- SDL.pollEvent
+          
+          -- see call to go above, but our value `s` here is our time (clockSession_)
+          -- this is the call that figures out how long (seconds) since the last call
+          -- to stepSession, hence we can get a `ds` which is our time delta, as well
+          -- as `s'`, the current time.
           (ds, s') <- stepSession s
+          
+          -- Since Wires are locally stateful, we can "step" the `game` wire using our
+          -- `ds` (again, no need to pass `s` since `game` "knows where it is" in time)
+          -- `w` is the game wire (see first call to `go` in `main`).
           (res, w') <- stepWire w ds (Right e)
+
+          -- We inspect the result of stepping the wire, if Left this indicates that
+          -- we had inhibition, and we decide to quit the game.
+          -- If right, we render the Game tuple, and loop back to `go`, using our new
+          -- session (current time) `s'` as well as the updated ("stepped") game wire
+          -- `w'` that we got from `stepWire`.
           case res of
             Left _ -> putStrLn "qutting"
             Right gm -> do render scr as gm
@@ -150,16 +204,16 @@ main = do
                            go as scr s' w'
 
 render :: SDL.Surface -> Assets -> Game -> IO ()
-render screen assets (playerPos, dx, (c,f)) = do
+render screen assets (playerPos, dx, (c,f), ps) = do
     clearScreen
     renderLevel
     renderPlayer
---    renderParticles
+    renderParticles
   where
---    renderParticles =
---      CM.forM_ ps $ \ (SmokePuff (V2 x y)) -> do
---        (SDL.Rect _ _ w h) <- SDL.getClipRect (smoke assets)
---        SDL.blitSurface (smoke assets) Nothing screen (Just $ SDL.Rect (round (x - dx) - w) (round y) w h)
+    renderParticles =
+      CM.forM_ ps $ \ (SmokePuff (V2 x y)) -> do
+        (SDL.Rect _ _ w h) <- SDL.getClipRect (smoke assets)
+        SDL.blitSurface (smoke assets) Nothing screen (Just $ SDL.Rect (round (x - dx) - w) (round y) w h)
     clearScreen = 
       SDL.mapRGB (SDL.surfaceGetPixelFormat screen) 180 87 40 >>=
       SDL.fillRect screen Nothing
@@ -179,15 +233,3 @@ render screen assets (playerPos, dx, (c,f)) = do
       blitRects c (wallColor assets)
       blitRects f (wallColor assets)
 --------------------------------------------------------------------------------
-
-
-
---------------------------------------------------------------------------------
--- Extra
---------------------------------------------------------------------------------
-smokeTrail :: Wire' (V2 Double) [Particle]
-smokeTrail = manageWires . periodic (0.09) . arr (\x -> for 0.3 . pure (SmokePuff x))
-
-
-animation :: Int -> Double -> Wire' a Int
-animation n fps = hold . periodicList (1 / realToFrac fps) (cycle [0..n-1])
